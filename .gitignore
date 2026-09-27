@@ -1,0 +1,25 @@
+# Entorno virtual
+.venv/
+
+# Variables de entorno (credenciales, claves)
+.env
+
+# Cache de Python
+__pycache__/
+*.py[cod]
+
+# Herramientas de testing y linting
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editores y sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
