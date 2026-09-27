@@ -2,6 +2,7 @@ import asyncio
 from logging.config import fileConfig
 from app.core.config import settings
 from app.core.database import Base
+import app.models  # noqa: F401  (registra los modelos para el autogenerate)
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
