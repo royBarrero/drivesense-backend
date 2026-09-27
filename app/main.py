@@ -10,6 +10,7 @@ from app.auth.router import router as auth_router
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.errores import manejar_error_validacion
+from app.recorridos.router import router as recorridos_router
 
 app = FastAPI(
     title="DriveSense API",
@@ -29,6 +30,7 @@ app.add_middleware(
 app.add_exception_handler(RequestValidationError, manejar_error_validacion)
 
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(recorridos_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Sistema"])

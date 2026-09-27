@@ -6,3 +6,4 @@ Cada modelo nuevo debe agregarse aquí.
 
 from app.auth.models import Usuario  # noqa: F401
 from app.flotas.models import Empresa  # noqa: F401
+from app.recorridos.models import Recorrido  # noqa: F401

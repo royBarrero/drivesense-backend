@@ -9,6 +9,18 @@ _MENSAJES = {
     "string_too_long": "Debe tener como máximo {max_length} caracteres",
     "string_type": "Debe ser un texto",
     "json_invalid": "El cuerpo de la petición no es un JSON válido",
+    "greater_than_equal": "Debe ser mayor o igual a {ge:g}",
+    "less_than_equal": "Debe ser menor o igual a {le:g}",
+    "float_parsing": "Debe ser un número",
+    "float_type": "Debe ser un número",
+    "finite_number": "Debe ser un número finito",
+    "int_parsing": "Debe ser un número entero",
+    "int_type": "Debe ser un número entero",
+    "int_from_float": "Debe ser un número entero",
+    "datetime_parsing": "Debe ser una fecha y hora válida",
+    "datetime_from_date_parsing": "Debe ser una fecha y hora válida",
+    "datetime_type": "Debe ser una fecha y hora válida",
+    "timezone_aware": "La fecha debe incluir la zona horaria",
 }
 
 
@@ -30,6 +42,13 @@ def _traducir(error: dict) -> str:
     if plantilla is None:
         return "Valor inválido"
     return plantilla.format(**ctx)
+
+
+def error_de_campo(campo: str, mensaje: str) -> RequestValidationError:
+    """422 de un campo por una regla que se valida en el servicio (p. ej. contra la BD)."""
+    return RequestValidationError(
+        [{"type": "value_error", "loc": ("body", campo), "msg": mensaje, "ctx": {"error": mensaje}}]
+    )
 
 
 def _campo(error: dict) -> str | None:
