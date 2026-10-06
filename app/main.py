@@ -10,6 +10,8 @@ from app.auth.router import router as auth_router
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.errores import manejar_error_validacion
+from app.pruebas.router import router as pruebas_router
+from app.puntaje.router import router as puntaje_router
 from app.recorridos.router import router as recorridos_router
 
 app = FastAPI(
@@ -31,6 +33,11 @@ app.add_exception_handler(RequestValidationError, manejar_error_validacion)
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(recorridos_router, prefix="/api/v1")
+app.include_router(puntaje_router, prefix="/api/v1")
+
+# Temporal: modo pruebas, solo si hay cuenta de pruebas configurada
+if settings.pruebas_correo.strip():
+    app.include_router(pruebas_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Sistema"])

@@ -21,6 +21,11 @@ _MENSAJES = {
     "datetime_from_date_parsing": "Debe ser una fecha y hora válida",
     "datetime_type": "Debe ser una fecha y hora válida",
     "timezone_aware": "La fecha debe incluir la zona horaria",
+    "too_long": "Debe tener como máximo {max_length} elementos",
+    "list_type": "Debe ser una lista",
+    "model_type": "Debe ser un objeto",
+    "model_attributes_type": "Debe ser un objeto",
+    "dict_type": "Debe ser un objeto",
 }
 
 

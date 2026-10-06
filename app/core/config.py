@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # Orígenes separados por comas, p. ej. "http://localhost:5173,https://panel.drivesense.com"
     cors_origenes: str = ""
 
+    # Temporal: correo de la cuenta admin compartida del modo pruebas; vacío = desactivado
+    pruebas_correo: str = ""
+
     @property
     def lista_cors_origenes(self) -> list[str]:
         return [origen.strip() for origen in self.cors_origenes.split(",") if origen.strip()]

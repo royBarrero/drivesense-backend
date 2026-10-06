@@ -5,7 +5,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.models import Usuario
+from app.auth.models import RolUsuario, Usuario
 from app.core.database import get_db
 from app.core.security import decodificar_token
 
@@ -45,3 +45,15 @@ async def obtener_usuario_actual(
 
 
 UsuarioActual = Annotated[Usuario, Depends(obtener_usuario_actual)]
+
+
+def _exigir_conductor(usuario: UsuarioActual) -> Usuario:
+    if usuario.rol != RolUsuario.conductor:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="Solo los conductores pueden usar esta función"
+        )
+    return usuario
+
+
+# Usuario autenticado con rol conductor; 403 para cualquier otro rol
+ConductorActual = Annotated[Usuario, Depends(_exigir_conductor)]

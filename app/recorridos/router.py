@@ -1,6 +1,7 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
+from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencias import UsuarioActual
@@ -10,6 +11,8 @@ from app.recorridos import service
 from app.recorridos.schemas import (
     FinalizarRecorridoEntrada,
     IniciarRecorridoEntrada,
+    PaginaHistorial,
+    RecorridoDetalle,
     RecorridoSalida,
 )
 
@@ -45,6 +48,30 @@ async def recorrido_activo(usuario: ConductorActual, db: AsyncSession = Depends(
     return recorrido
 
 
+@router.get("", response_model=PaginaHistorial)
+async def historial(
+    usuario: ConductorActual,
+    db: AsyncSession = Depends(get_db),
+    # Inicio del periodo con zona horaria: "esta semana" depende de la zona del teléfono
+    desde: Annotated[AwareDatetime | None, Query()] = None,
+    antes_de: Annotated[int | None, Query(ge=1)] = None,
+    limite: Annotated[int, Query(ge=1, le=50)] = 20,
+):
+    """Recorridos finalizados del conductor, paginados por cursor (HU-06).
+
+    La primera página (sin `antes_de`) incluye el resumen del periodo.
+    """
+    return await service.listar_historial(db, usuario, desde, antes_de, limite)
+
+
+@router.get("/{recorrido_id}", response_model=RecorridoDetalle)
+async def detalle_recorrido(
+    recorrido_id: int, usuario: ConductorActual, db: AsyncSession = Depends(get_db)
+):
+    """Detalle de un recorrido finalizado del conductor, con su ruta (HU-06, HU-08)."""
+    return await service.obtener_recorrido_finalizado(db, usuario, recorrido_id)
+
+
 @router.patch("/{recorrido_id}/finalizar", response_model=RecorridoSalida)
 async def finalizar_recorrido(
     recorrido_id: int,
@@ -52,5 +79,5 @@ async def finalizar_recorrido(
     usuario: ConductorActual,
     db: AsyncSession = Depends(get_db),
 ):
-    """Finaliza un recorrido con su resumen; queda finalizado o descartado (HU-05)."""
+    """Finaliza un recorrido con su resumen y su ruta; queda finalizado o descartado (HU-05, HU-08)."""
     return await service.finalizar_recorrido(db, usuario, recorrido_id, datos)
