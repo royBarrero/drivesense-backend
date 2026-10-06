@@ -1,0 +1,8 @@
+# Finales de línea LF en el repo y en la carpeta de trabajo, en cualquier sistema.
+# Git detecta solo los binarios (imágenes, fuentes) y no los toca.
+* text=auto eol=lf
+
+# Los scripts de Windows necesitan CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
