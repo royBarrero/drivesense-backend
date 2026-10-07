@@ -1,0 +1,62 @@
+# Stack de producción de DriveSense: Caddy (HTTPS) + API + panel web + PostgreSQL.
+# Se ejecuta desde esta carpeta: `docker compose up -d --build` (lee las variables de ./.env).
+# Requiere el repo drivesense-frontend clonado al lado de drivesense-backend.
+
+name: drivesense
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Falta POSTGRES_USER en .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Falta POSTGRES_DB en .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ..
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET:?Falta JWT_SECRET en .env}
+      CORS_ORIGENES: https://${DOMINIO}
+      PRUEBAS_CORREO: ${PRUEBAS_CORREO:-}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  panel:
+    build:
+      context: ../../drivesense-frontend
+      args:
+        VITE_API_URL: https://${DOMINIO:?Falta DOMINIO en .env}
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMINIO: ${DOMINIO}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - panel
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

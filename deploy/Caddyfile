@@ -1,0 +1,14 @@
+# Un solo dominio: la API y el panel comparten origen.
+# Caddy obtiene y renueva el certificado HTTPS solo (con DOMINIO=localhost usa uno interno).
+{$DOMINIO} {
+	encode zstd gzip
+
+	@api path /api/* /health /docs /docs/* /openapi.json /redoc
+	handle @api {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy panel:80
+	}
+}
