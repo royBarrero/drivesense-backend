@@ -1,21 +1,35 @@
-"""Fórmula del DriveScore (HU-15) y resumen del histórico (HU-17): sin base de datos."""
+"""Fórmula del DriveScore (HU-15), resumen del histórico (HU-17) y comparativo (HU-20):
+sin base de datos."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
+
+import pytest
+from fastapi.exceptions import RequestValidationError
 
 from app.puntaje.service import (
     Agrupacion,
     Calificacion,
+    Cambio,
     EventoPuntaje,
+    PeriodoComparativo,
     Puntaje,
+    Resultado,
     ViajePuntuado,
     agrupacion_para,
     agrupar_puntos,
+    calcular_eventos_por_10km,
     calcular_puntaje,
     calificar,
+    comparar,
+    comparar_periodos,
+    destacadas,
+    inicio_anterior,
     mejor_y_peor,
     promedio_desde_sumas,
     promedio_ponderado,
     resumir_historico,
+    resumir_periodo,
+    validar_inicio,
 )
 from app.telemetria.models import TipoEvento
 
@@ -202,3 +216,129 @@ def test_periodo_sin_viajes():
     assert h.categorias is None
     assert (h.mejor, h.peor) == (None, None)
     assert h.promedio_total == 81
+
+
+# --- Comparativo (HU-20) -----------------------------------------------------
+
+ZONA = timezone(timedelta(hours=-5))
+LUNES = datetime(2026, 11, 9, tzinfo=ZONA)
+
+
+def puntuado(
+    id: int, dia: float, drivescore: int, km: float = 10, eventos: int = 0, **categorias: int
+) -> ViajePuntuado:
+    valores = {"frenadas": 100, "aceleraciones": 100, "giros": 100, "velocidad": 100} | categorias
+    return ViajePuntuado(
+        id, LUNES + timedelta(days=dia), km * 1000, drivescore,
+        valores["frenadas"], valores["aceleraciones"], valores["giros"], valores["velocidad"],
+        eventos,
+    )
+
+
+def comparativo(actuales, anteriores):
+    return comparar_periodos(
+        PeriodoComparativo.semana, actuales, anteriores,
+        LUNES, LUNES + timedelta(days=3), LUNES - timedelta(days=7),
+    )
+
+
+def test_inicio_anterior_semana_y_mes():
+    assert inicio_anterior(PeriodoComparativo.semana, LUNES) == datetime(2026, 11, 2, tzinfo=ZONA)
+    marzo = datetime(2026, 3, 1, tzinfo=ZONA)
+    assert inicio_anterior(PeriodoComparativo.mes, marzo) == datetime(2026, 2, 1, tzinfo=ZONA)
+    enero = datetime(2027, 1, 1, tzinfo=ZONA)
+    assert inicio_anterior(PeriodoComparativo.mes, enero) == datetime(2026, 12, 1, tzinfo=ZONA)
+
+
+def test_valida_el_inicio_en_la_zona_del_telefono():
+    validar_inicio(PeriodoComparativo.semana, LUNES)
+    validar_inicio(PeriodoComparativo.mes, datetime(2026, 11, 1, tzinfo=ZONA))
+    # El mismo instante en UTC son las 5:00: no es medianoche
+    with pytest.raises(RequestValidationError):
+        validar_inicio(PeriodoComparativo.semana, LUNES.astimezone(UTC))
+    with pytest.raises(RequestValidationError):
+        validar_inicio(PeriodoComparativo.semana, LUNES + timedelta(days=1))
+    with pytest.raises(RequestValidationError):
+        validar_inicio(PeriodoComparativo.mes, LUNES)
+
+
+def test_eventos_por_10km_con_un_decimal():
+    assert calcular_eventos_por_10km(3, 20_000) == 1.5
+    assert calcular_eventos_por_10km(1, 30_000) == 0.3
+    assert calcular_eventos_por_10km(1, 40_000) == 0.3  # 0,25 → 0,3
+    assert calcular_eventos_por_10km(0, 0) is None
+
+
+def test_resumen_del_periodo_ponderado_por_distancia():
+    r = resumir_periodo(
+        [puntuado(1, 0, 90, km=20, eventos=1, frenadas=80), puntuado(2, 1, 60, km=5, eventos=4)],
+        LUNES, LUNES + timedelta(days=2),
+    )
+    assert (r.viajes, r.distancia_m, r.eventos) == (2, 25_000, 5)
+    assert r.drivescore == 84
+    assert r.calificacion == Calificacion.muy_bueno
+    assert r.categorias["frenadas"] == 84  # (80 × 20 + 100 × 5) / 25
+    assert r.eventos_por_10km == 2.0
+
+
+def test_periodo_sin_viajes():
+    r = resumir_periodo([], LUNES, LUNES + timedelta(days=1))
+    assert (r.viajes, r.distancia_m, r.eventos) == (0, 0, 0)
+    assert (r.drivescore, r.calificacion, r.categorias, r.eventos_por_10km) == (None,) * 4
+
+
+def test_sentido_de_la_mejora():
+    assert comparar(85, 80) == Cambio(5, Resultado.mejoro)
+    assert comparar(78, 80) == Cambio(-2, Resultado.empeoro)
+    assert comparar(80, 80) == Cambio(0, Resultado.igual)
+    # Menos eventos por distancia es mejor
+    assert comparar(0.8, 1.1, mayor_es_mejor=False) == Cambio(-0.3, Resultado.mejoro)
+    assert comparar(1.1, 0.8, mayor_es_mejor=False) == Cambio(0.3, Resultado.empeoro)
+    assert comparar(1.0, 1.0, mayor_es_mejor=False).resultado == Resultado.igual
+
+
+def test_destacadas_con_empate_por_riesgo():
+    def cambios(**d):
+        return {c: comparar(d.get(c, 0), 0) for c in ("frenadas", "aceleraciones", "giros", "velocidad")}
+
+    assert destacadas(cambios(frenadas=8, giros=8, aceleraciones=-3)) == ("frenadas", "aceleraciones")
+    assert destacadas(cambios(aceleraciones=5, velocidad=5, giros=-4, frenadas=-4)) == (
+        "velocidad", "frenadas",
+    )
+    assert destacadas(cambios()) == (None, None)
+    assert destacadas(cambios(giros=2)) == ("giros", None)
+
+
+def test_comparativo_completo():
+    actuales = [
+        puntuado(3, 0, 90, eventos=1, frenadas=90, giros=80),
+        puntuado(4, 1, 86, eventos=1, frenadas=90, giros=80),
+    ]
+    anteriores = [
+        puntuado(1, -6, 80, km=20, eventos=4, frenadas=70, giros=90),
+        puntuado(2, -5, 80, eventos=2, frenadas=70, giros=90),
+    ]
+    c = comparativo(actuales, anteriores)
+    assert c.comparable and c.minimo_viajes == 2
+    assert c.drivescore == Cambio(8, Resultado.mejoro)
+    assert c.categorias["frenadas"] == Cambio(20, Resultado.mejoro)
+    assert c.categorias["giros"] == Cambio(-10, Resultado.empeoro)
+    assert c.categorias["velocidad"] == Cambio(0, Resultado.igual)
+    assert (c.mas_mejoro, c.mas_empeoro) == ("frenadas", "giros")
+    # 2 eventos en 20 km (1,0) frente a 6 en 30 km (2,0)
+    assert c.eventos_por_10km == Cambio(-1.0, Resultado.mejoro)
+    assert (c.viajes, c.distancia_m) == (0, -10_000)
+    assert c.anterior.desde == LUNES - timedelta(days=7)
+    assert c.anterior.hasta == LUNES
+
+
+def test_sin_el_minimo_de_viajes_no_compara():
+    dos = [puntuado(1, 0, 90), puntuado(2, 1, 80)]
+    for actuales, anteriores in (([dos[0]], dos), (dos, [dos[0]]), ([], [])):
+        c = comparativo(actuales, anteriores)
+        assert not c.comparable
+        assert (c.drivescore, c.categorias, c.eventos_por_10km) == (None, None, None)
+        assert (c.viajes, c.distancia_m, c.mas_mejoro, c.mas_empeoro) == (None,) * 4
+    # Los periodos vienen igual: la app muestra cuántos viajes lleva cada uno
+    c = comparativo([dos[0]], dos)
+    assert (c.actual.viajes, c.anterior.viajes) == (1, 2)

@@ -1,6 +1,7 @@
-"""DriveScore del viaje (HU-15) y su histórico (HU-17).
+"""DriveScore del viaje (HU-15), su histórico (HU-17) y el comparativo entre periodos (HU-20).
 
-La fórmula y el resumen del histórico son puros; `obtener_historico` hace las consultas.
+La fórmula, el histórico y el comparativo son puros; `obtener_historico` y
+`obtener_comparativo` hacen las consultas.
 """
 
 import enum
@@ -15,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.models import Usuario
 from app.core.errores import error_de_campo
 from app.recorridos.models import EstadoRecorrido, Recorrido
-from app.telemetria.models import TipoEvento
+from app.telemetria.models import Evento, TipoEvento
 
 
 class ParametrosPuntaje:
@@ -164,6 +165,8 @@ class ViajePuntuado:
     aceleraciones: int
     giros: int
     velocidad: int
+    # Cantidad de eventos del viaje (solo la usa el comparativo, HU-20)
+    eventos: int = 0
 
 
 @dataclass(frozen=True)
@@ -347,4 +350,226 @@ async def obtener_historico(db: AsyncSession, usuario: Usuario, desde: datetime)
         hasta=hasta,
         viajes_totales=viajes_totales,
         promedio_total=promedio_desde_sumas(suma_ponderada, suma_distancia),
+    )
+
+
+# --- Comparativo entre periodos (HU-20) --------------------------------------
+
+
+class PeriodoComparativo(str, enum.Enum):
+    """Periodos calendario: el actual cuenta lo que va; el anterior, completo."""
+
+    semana = "semana"
+    mes = "mes"
+
+
+class Resultado(str, enum.Enum):
+    mejoro = "mejoro"
+    empeoro = "empeoro"
+    igual = "igual"
+
+
+# Viajes con puntaje que necesita cada periodo para compararlos: con uno solo, el
+# promedio sería ese viaje
+MINIMO_VIAJES_COMPARATIVO = 2
+
+# Desempate de "lo que más mejoró / empeoró": el mismo orden de riesgo de la
+# recomendación (HU-18) y de "Lo que más restó" en la app
+CATEGORIAS_POR_RIESGO = ("velocidad", "frenadas", "giros", "aceleraciones")
+
+
+@dataclass(frozen=True)
+class ResumenPeriodo:
+    desde: datetime
+    hasta: datetime
+    viajes: int
+    distancia_m: float
+    eventos: int
+    # Nulos si el periodo no tiene viajes
+    drivescore: int | None
+    calificacion: Calificacion | None
+    categorias: dict[str, int] | None
+    # Un decimal, sobre la distancia de los viajes
+    eventos_por_10km: float | None
+
+
+@dataclass(frozen=True)
+class Cambio:
+    # actual − anterior
+    diferencia: int | float
+    resultado: Resultado
+
+
+@dataclass(frozen=True)
+class Comparativo:
+    periodo: PeriodoComparativo
+    minimo_viajes: int
+    actual: ResumenPeriodo
+    anterior: ResumenPeriodo
+    # Los dos periodos con `minimo_viajes` o más; si no, lo que sigue es nulo
+    comparable: bool
+    drivescore: Cambio | None = None
+    categorias: dict[str, Cambio] | None = None
+    eventos_por_10km: Cambio | None = None
+    # Diferencias sin sentido de mejora: más viajes no es manejar mejor
+    viajes: int | None = None
+    distancia_m: float | None = None
+    mas_mejoro: str | None = None
+    mas_empeoro: str | None = None
+
+
+def inicio_anterior(periodo: PeriodoComparativo, desde: datetime) -> datetime:
+    """Inicio del periodo anterior: el lunes previo o el día 1 del mes previo, con la
+    misma zona que `desde`."""
+    if periodo == PeriodoComparativo.semana:
+        return desde - timedelta(days=7)
+    if desde.month == 1:
+        return desde.replace(year=desde.year - 1, month=12)
+    return desde.replace(month=desde.month - 1)
+
+
+def validar_inicio(periodo: PeriodoComparativo, desde: datetime) -> None:
+    """`desde` debe ser la medianoche de un lunes (semana) o de un día 1 (mes) en su
+    propia zona, que es la del teléfono."""
+    medianoche = (desde.hour, desde.minute, desde.second, desde.microsecond) == (0, 0, 0, 0)
+    if periodo == PeriodoComparativo.semana and not (medianoche and desde.weekday() == 0):
+        raise error_de_campo("desde", "El inicio de la semana debe ser un lunes a medianoche")
+    if periodo == PeriodoComparativo.mes and not (medianoche and desde.day == 1):
+        raise error_de_campo("desde", "El inicio del mes debe ser el día 1 a medianoche")
+
+
+def calcular_eventos_por_10km(eventos: int, distancia_m: float) -> float | None:
+    """Un decimal, con 0,5 hacia arriba; nulo sin distancia."""
+    if distancia_m <= 0:
+        return None
+    return math.floor(eventos / (distancia_m / 10_000) * 10 + 0.5) / 10
+
+
+def resumir_periodo(
+    viajes: list[ViajePuntuado], desde: datetime, hasta: datetime
+) -> ResumenPeriodo:
+    distancia = sum(v.distancia_m for v in viajes)
+    eventos = sum(v.eventos for v in viajes)
+    drivescore = promedio_ponderado(viajes)
+    return ResumenPeriodo(
+        desde=desde,
+        hasta=hasta,
+        viajes=len(viajes),
+        distancia_m=distancia,
+        eventos=eventos,
+        drivescore=drivescore,
+        calificacion=None if drivescore is None else calificar(drivescore),
+        categorias={c: promedio_ponderado(viajes, c) for c in CATEGORIAS} if viajes else None,
+        eventos_por_10km=calcular_eventos_por_10km(eventos, distancia) if viajes else None,
+    )
+
+
+def comparar(actual: float, anterior: float, mayor_es_mejor: bool = True) -> Cambio:
+    """actual − anterior y si eso es mejora. Se redondea a un decimal: los eventos
+    por 10 km ya vienen así y la resta en float dejaría 0,30000000000000004."""
+    diferencia = round(actual - anterior, 1)
+    if diferencia == 0:
+        return Cambio(0, Resultado.igual)
+    mejoro = (diferencia > 0) == mayor_es_mejor
+    return Cambio(diferencia, Resultado.mejoro if mejoro else Resultado.empeoro)
+
+
+def destacadas(categorias: dict[str, Cambio]) -> tuple[str | None, str | None]:
+    """Categoría que más subió y la que más bajó; en empate, la de mayor riesgo
+    (`sorted` es estable). Nula si ninguna subió (o ninguna bajó)."""
+    subieron = sorted(
+        (c for c in CATEGORIAS_POR_RIESGO if categorias[c].diferencia > 0),
+        key=lambda c: -categorias[c].diferencia,
+    )
+    bajaron = sorted(
+        (c for c in CATEGORIAS_POR_RIESGO if categorias[c].diferencia < 0),
+        key=lambda c: categorias[c].diferencia,
+    )
+    return (subieron[0] if subieron else None), (bajaron[0] if bajaron else None)
+
+
+def comparar_periodos(
+    periodo: PeriodoComparativo,
+    actuales: list[ViajePuntuado],
+    anteriores: list[ViajePuntuado],
+    desde: datetime,
+    hasta: datetime,
+    desde_anterior: datetime,
+) -> Comparativo:
+    """Periodo `[desde, hasta)` frente a `[desde_anterior, desde)` (HU-20)."""
+    actual = resumir_periodo(actuales, desde, hasta)
+    anterior = resumir_periodo(anteriores, desde_anterior, desde)
+    base = {
+        "periodo": periodo,
+        "minimo_viajes": MINIMO_VIAJES_COMPARATIVO,
+        "actual": actual,
+        "anterior": anterior,
+    }
+    if min(actual.viajes, anterior.viajes) < MINIMO_VIAJES_COMPARATIVO:
+        return Comparativo(**base, comparable=False)
+
+    categorias = {c: comparar(actual.categorias[c], anterior.categorias[c]) for c in CATEGORIAS}
+    mas_mejoro, mas_empeoro = destacadas(categorias)
+    return Comparativo(
+        **base,
+        comparable=True,
+        drivescore=comparar(actual.drivescore, anterior.drivescore),
+        categorias=categorias,
+        eventos_por_10km=comparar(
+            actual.eventos_por_10km, anterior.eventos_por_10km, mayor_es_mejor=False
+        ),
+        viajes=actual.viajes - anterior.viajes,
+        distancia_m=actual.distancia_m - anterior.distancia_m,
+        mas_mejoro=mas_mejoro,
+        mas_empeoro=mas_empeoro,
+    )
+
+
+async def obtener_comparativo(
+    db: AsyncSession, usuario: Usuario, periodo: PeriodoComparativo, desde: datetime
+) -> Comparativo:
+    """Periodo actual del conductor frente al anterior (HU-20).
+
+    Solo cuentan sus recorridos finalizados con puntaje; una sola consulta trae los
+    dos periodos con la cantidad de eventos de cada viaje.
+    """
+    hasta = datetime.now(UTC)
+    if desde >= hasta:
+        raise error_de_campo("desde", "El inicio del periodo no puede estar en el futuro")
+    validar_inicio(periodo, desde)
+    desde_anterior = inicio_anterior(periodo, desde)
+
+    eventos = (
+        select(func.count(Evento.id))
+        .where(Evento.recorrido_id == Recorrido.id)
+        .correlate(Recorrido)
+        .scalar_subquery()
+    )
+    filas = await db.execute(
+        select(
+            Recorrido.id,
+            Recorrido.fecha_inicio,
+            Recorrido.distancia_m,
+            Recorrido.drivescore,
+            Recorrido.puntaje_frenadas,
+            Recorrido.puntaje_aceleraciones,
+            Recorrido.puntaje_giros,
+            Recorrido.puntaje_velocidad,
+            eventos,
+        ).where(
+            Recorrido.usuario_id == usuario.id,
+            Recorrido.estado == EstadoRecorrido.finalizado,
+            Recorrido.drivescore.is_not(None),
+            Recorrido.fecha_inicio >= desde_anterior,
+            Recorrido.fecha_inicio < hasta,
+        )
+    )
+    viajes = [ViajePuntuado(*fila) for fila in filas]
+    return comparar_periodos(
+        periodo,
+        actuales=[v for v in viajes if v.fecha_inicio >= desde],
+        anteriores=[v for v in viajes if v.fecha_inicio < desde],
+        desde=desde,
+        hasta=hasta,
+        desde_anterior=desde_anterior,
     )

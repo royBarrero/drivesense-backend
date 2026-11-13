@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.models import RolUsuario, Usuario
 from app.core.errores import error_de_campo
 from app.puntaje.service import EventoPuntaje, calcular_puntaje
+from app.recomendaciones import service as recomendaciones
+from app.recomendaciones.models import Recomendacion
+from app.recomendaciones.schemas import RecomendacionSalida
 from app.recorridos.models import EstadoRecorrido, Recorrido
 from app.telemetria.models import Evento, TipoEvento
 from app.telemetria.schemas import EventoSalida
@@ -21,6 +24,7 @@ from app.recorridos.schemas import (
     PaginaHistorial,
     RecorridoDetalle,
     RecorridoHistorial,
+    RecorridoSalida,
     ResumenPeriodo,
 )
 
@@ -81,10 +85,11 @@ async def iniciar_recorrido(
 
 async def finalizar_recorrido(
     db: AsyncSession, usuario: Usuario, recorrido_id: int, datos: FinalizarRecorridoEntrada
-) -> Recorrido:
+) -> RecorridoSalida:
     """Cierra el recorrido con sus métricas; lo descarta si es demasiado corto (HU-05).
 
-    Si queda finalizado, guarda sus eventos y su puntaje (HU-15) en el mismo commit.
+    Si queda finalizado, guarda sus eventos, su puntaje (HU-15) y su recomendación
+    principal (HU-18) en el mismo commit.
     """
     # FOR UPDATE: dos finalizaciones simultáneas no pueden cerrar el mismo recorrido
     recorrido = await db.scalar(
@@ -132,8 +137,29 @@ async def finalizar_recorrido(
         recorrido.puntaje_aceleraciones = puntaje.aceleraciones
         recorrido.puntaje_giros = puntaje.giros
         recorrido.puntaje_velocidad = puntaje.velocidad
+        filas = recomendaciones.filas(
+            recorrido.id, puntaje, (EventoPuntaje(e.tipo, e.duracion_s) for e in datos.eventos)
+        )
+        db.add_all(filas)
     await db.commit()
-    return recorrido
+
+    salida = RecorridoSalida.model_validate(recorrido)
+    if not es_corto:
+        agregar_recomendaciones(salida, filas)
+    return salida
+
+
+def agregar_recomendaciones(
+    salida: RecorridoSalida | RecorridoDetalle, filas: list[Recomendacion]
+) -> None:
+    """Pone la principal (`orden` 0) y las secundarias (HU-19), en orden."""
+    if not filas:
+        return
+    principal, *secundarias = sorted(filas, key=lambda r: r.orden)
+    salida.recomendacion = RecomendacionSalida.model_validate(principal)
+    salida.recomendaciones_secundarias = [
+        RecomendacionSalida.model_validate(r) for r in secundarias
+    ]
 
 
 async def listar_historial(
@@ -213,6 +239,11 @@ async def obtener_recorrido_finalizado(
     if eventos is not None:
         detalle.eventos = [EventoSalida.model_validate(e) for e in eventos]
         detalle.eventos_por_tipo = contar_eventos(eventos)
+    # Los viajes anteriores a HU-18/HU-19 las generan aquí, la primera vez que se
+    # consultan
+    agregar_recomendaciones(
+        detalle, await recomendaciones.obtener_recomendaciones(db, recorrido, eventos)
+    )
     return detalle
 
 
