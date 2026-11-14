@@ -11,6 +11,7 @@ from pydantic import (
     field_validator,
 )
 
+from app.gamificacion.schemas import RecompensaViajeSalida
 from app.recomendaciones.schemas import RecomendacionSalida
 from app.recorridos.models import EstadoRecorrido
 from app.telemetria.models import TipoEvento
@@ -133,6 +134,9 @@ class RecorridoSalida(BaseModel):
     # HU-18 y HU-19: solo en la respuesta del PATCH de un recorrido finalizado
     recomendacion: RecomendacionSalida | None = None
     recomendaciones_secundarias: list[RecomendacionSalida] = []
+    # HU-21: puntos, nivel y logros nuevos; solo en la respuesta del PATCH de un
+    # recorrido finalizado
+    recompensa: RecompensaViajeSalida | None = None
 
 
 class RecorridoHistorial(BaseModel):

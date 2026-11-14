@@ -20,6 +20,10 @@ class Empresa(Base):
     tipo: Mapped[TipoEmpresa] = mapped_column(Enum(TipoEmpresa, name="tipo_empresa"))
     email_contacto: Mapped[str] = mapped_column(String(255))
     telefono: Mapped[str] = mapped_column(String(20))
+    # Zona IANA de la empresa: de ella salen los periodos (7 días, 30 días) del panel
+    zona_horaria: Mapped[str] = mapped_column(
+        String(50), default="America/La_Paz", server_default="America/La_Paz"
+    )
     activo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     fecha_creacion: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

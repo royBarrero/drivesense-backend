@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import RolUsuario, Usuario
 from app.core.errores import error_de_campo
+from app.gamificacion import service as gamificacion
+from app.gamificacion.schemas import RecompensaViajeSalida
 from app.puntaje.service import EventoPuntaje, calcular_puntaje
 from app.recomendaciones import service as recomendaciones
 from app.recomendaciones.models import Recomendacion
@@ -88,8 +90,9 @@ async def finalizar_recorrido(
 ) -> RecorridoSalida:
     """Cierra el recorrido con sus métricas; lo descarta si es demasiado corto (HU-05).
 
-    Si queda finalizado, guarda sus eventos, su puntaje (HU-15) y su recomendación
-    principal (HU-18) en el mismo commit.
+    Si queda finalizado, guarda sus eventos, su puntaje (HU-15), sus recomendaciones
+    (HU-18, HU-19), sus puntos y logros (HU-21) y los desafíos semanales que completa
+    (HU-23) en el mismo commit.
     """
     # FOR UPDATE: dos finalizaciones simultáneas no pueden cerrar el mismo recorrido
     recorrido = await db.scalar(
@@ -141,11 +144,17 @@ async def finalizar_recorrido(
             recorrido.id, puntaje, (EventoPuntaje(e.tipo, e.duracion_s) for e in datos.eventos)
         )
         db.add_all(filas)
+        # Puntos y logros (HU-21), también los que falten de viajes anteriores
+        sinc = await gamificacion.sincronizar(db, usuario.id)
+        # Desafíos de la semana que este viaje completa, con su recompensa (HU-23)
+        desafios = await gamificacion.completar_desafios(db, usuario.id, datetime.now(UTC))
+        recompensa = gamificacion.recompensa_de(sinc, recorrido.id, desafios)
     await db.commit()
 
     salida = RecorridoSalida.model_validate(recorrido)
     if not es_corto:
         agregar_recomendaciones(salida, filas)
+        salida.recompensa = RecompensaViajeSalida.model_validate(recompensa)
     return salida
 
 

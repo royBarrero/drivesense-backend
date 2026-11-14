@@ -22,9 +22,9 @@ Los `CLAUDE.md` de cada repo sí están versionados en su repo.
 
 | Carpeta | Stack | Estado |
 |---|---|---|
-| `drivesense-backend` | Python 3.14, FastAPI async, SQLAlchemy 2 async + asyncpg, PostgreSQL 17, Alembic, pydantic-settings | HU-01 a HU-06, la ruta de HU-08, HU-15 (tabla `eventos` y DriveScore), los conteos de eventos de HU-16, el histórico de HU-17, el comparativo entre periodos (HU-20), los eventos con posición del detalle (HU-29) y las recomendaciones principal y secundarias (HU-18, HU-19) implementados, más el **modo pruebas temporal** (`app/pruebas/`) (ver su CLAUDE.md) |
-| `drivesense-mobile` | Flutter 3.41.6 / Dart 3.11.4, sensors_plus, geolocator, Riverpod — app del conductor | Base de la app, HU-01, HU-02, HU-04 a HU-17 (los eventos se envían al finalizar), HU-18 y HU-19 (consejos del viaje), HU-20 (comparar periodos) y HU-29 (mapa del viaje); envía el teléfono y la versión de la app al iniciar un viaje (ver su CLAUDE.md y `docs/diseno.md`) |
-| `drivesense-frontend` | React 19 + Vite + Tailwind v4 + Shadcn/ui — panel web B2B para admins de empresa | Landing, login y registro de empresa (HU-03), panel con menú lateral e Inicio, más el **modo pruebas temporal** (`features/pruebas/`) (ver su CLAUDE.md y `docs/diseno.md`) |
+| `drivesense-backend` | Python 3.14, FastAPI async, SQLAlchemy 2 async + asyncpg, PostgreSQL 17, Alembic, pydantic-settings | HU-01 a HU-06, la ruta de HU-08, el listado y registro de conductores de la flota (HU-24), HU-15 (tabla `eventos` y DriveScore), los conteos de eventos de HU-16, el histórico de HU-17, el comparativo entre periodos (HU-20), el nivel y los logros (HU-21), los desafíos semanales y su recompensa (HU-22, HU-23), los eventos con posición del detalle (HU-29) y las recomendaciones principal y secundarias (HU-18, HU-19) implementados, más el **modo pruebas temporal** (`app/pruebas/`) (ver su CLAUDE.md) |
+| `drivesense-mobile` | Flutter 3.41.6 / Dart 3.11.4, sensors_plus, geolocator, Riverpod — app del conductor | Base de la app, HU-01, HU-02, HU-04 a HU-17 (los eventos se envían al finalizar), HU-18 y HU-19 (consejos del viaje), HU-20 (comparar periodos), HU-21 (nivel y logros), HU-22 y HU-23 (desafíos semanales y su recompensa) y HU-29 (mapa del viaje); envía el teléfono y la versión de la app al iniciar un viaje (ver su CLAUDE.md y `docs/diseno.md`) |
+| `drivesense-frontend` | React 19 + Vite + Tailwind v4 + Shadcn/ui — panel web B2B para admins de empresa | Landing, login y registro de empresa (HU-03), panel con menú lateral e Inicio, sección Conductores (HU-24: listado, resumen, alta y contraseña temporal), más el **modo pruebas temporal** (`features/pruebas/`) (ver su CLAUDE.md y `docs/diseno.md`) |
 
 - Autenticación JWT compartida entre app, panel web y backend.
 - Despliegue: una EC2 de AWS con Docker Compose (Caddy con HTTPS, API, panel y PostgreSQL), dominio con sslip.io. El compose y la guía viven en el backend (`deploy/`, `docs/despliegue.md`); la app se reparte como APK release apuntando a ese dominio.
@@ -42,7 +42,6 @@ Los `CLAUDE.md` de cada repo sí están versionados en su repo.
 | 6. Gestión de Flotas (panel web) | `flotas`, `suscripciones` | HU-24 listado de conductores de la empresa · HU-25 DriveScore y perfil de riesgo de un conductor · HU-26 historial de eventos de un conductor · HU-27 exportar reporte de desempeño · HU-28 gestionar plan de suscripción |
 
 Pendientes de agregar al backlog:
-- Admin registra a un conductor en su empresa.
 - Conductor cambia su contraseña temporal en el primer inicio de sesión.
 
 ## Usuarios, roles y multitenancy (definido)
