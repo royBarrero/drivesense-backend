@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import RolUsuario, Usuario
 from app.core.errores import error_de_campo
+from app.gamificacion import service as gamificacion
+from app.gamificacion.schemas import RecompensaViajeSalida
 from app.puntaje.service import EventoPuntaje, calcular_puntaje
+from app.recomendaciones import service as recomendaciones
+from app.recomendaciones.ia import EventoViaje
+from app.recomendaciones.models import Recomendacion
+from app.recomendaciones.schemas import RecomendacionSalida
 from app.recorridos.models import EstadoRecorrido, Recorrido
 from app.telemetria.models import Evento, TipoEvento
 from app.telemetria.schemas import EventoSalida
@@ -21,6 +27,7 @@ from app.recorridos.schemas import (
     PaginaHistorial,
     RecorridoDetalle,
     RecorridoHistorial,
+    RecorridoSalida,
     ResumenPeriodo,
 )
 
@@ -81,10 +88,12 @@ async def iniciar_recorrido(
 
 async def finalizar_recorrido(
     db: AsyncSession, usuario: Usuario, recorrido_id: int, datos: FinalizarRecorridoEntrada
-) -> Recorrido:
+) -> RecorridoSalida:
     """Cierra el recorrido con sus métricas; lo descarta si es demasiado corto (HU-05).
 
-    Si queda finalizado, guarda sus eventos y su puntaje (HU-15) en el mismo commit.
+    Si queda finalizado, guarda sus eventos, su puntaje (HU-15), sus recomendaciones
+    (HU-18, HU-19), sus puntos y logros (HU-21) y los desafíos semanales que completa
+    (HU-23) en el mismo commit.
     """
     # FOR UPDATE: dos finalizaciones simultáneas no pueden cerrar el mismo recorrido
     recorrido = await db.scalar(
@@ -132,8 +141,45 @@ async def finalizar_recorrido(
         recorrido.puntaje_aceleraciones = puntaje.aceleraciones
         recorrido.puntaje_giros = puntaje.giros
         recorrido.puntaje_velocidad = puntaje.velocidad
+        # Redactadas por la IA con los datos del viaje; si no responde, las plantillas
+        filas = await recomendaciones.filas_con_ia(
+            recorrido.id,
+            puntaje,
+            [
+                EventoViaje(e.tipo, e.velocidad_kmh, e.intensidad, e.duracion_s, e.velocidad_maxima_kmh)
+                for e in datos.eventos
+            ],
+            datos.distancia_m,
+            datos.duracion_s,
+            datos.velocidad_promedio_kmh,
+            datos.velocidad_maxima_kmh,
+        )
+        db.add_all(filas)
+        # Puntos y logros (HU-21), también los que falten de viajes anteriores
+        sinc = await gamificacion.sincronizar(db, usuario.id)
+        # Desafíos de la semana que este viaje completa, con su recompensa (HU-23)
+        desafios = await gamificacion.completar_desafios(db, usuario.id, datetime.now(UTC))
+        recompensa = gamificacion.recompensa_de(sinc, recorrido.id, desafios)
     await db.commit()
-    return recorrido
+
+    salida = RecorridoSalida.model_validate(recorrido)
+    if not es_corto:
+        agregar_recomendaciones(salida, filas)
+        salida.recompensa = RecompensaViajeSalida.model_validate(recompensa)
+    return salida
+
+
+def agregar_recomendaciones(
+    salida: RecorridoSalida | RecorridoDetalle, filas: list[Recomendacion]
+) -> None:
+    """Pone la principal (`orden` 0) y las secundarias (HU-19), en orden."""
+    if not filas:
+        return
+    principal, *secundarias = sorted(filas, key=lambda r: r.orden)
+    salida.recomendacion = RecomendacionSalida.model_validate(principal)
+    salida.recomendaciones_secundarias = [
+        RecomendacionSalida.model_validate(r) for r in secundarias
+    ]
 
 
 async def listar_historial(
@@ -196,11 +242,19 @@ async def obtener_recorrido_finalizado(
 
     Uno ajeno, inexistente, en curso o descartado responde 404: no es parte del historial.
     """
+    return await armar_detalle_finalizado(db, usuario.id, recorrido_id)
+
+
+async def armar_detalle_finalizado(
+    db: AsyncSession, usuario_id: int, recorrido_id: int
+) -> RecorridoDetalle:
+    """Detalle del recorrido finalizado `recorrido_id` del conductor `usuario_id`. Quien
+    llama ya comprobó que puede verlo (el propio conductor o el admin de su empresa)."""
     recorrido = await db.scalar(
         select(Recorrido)
         .where(
             Recorrido.id == recorrido_id,
-            Recorrido.usuario_id == usuario.id,
+            Recorrido.usuario_id == usuario_id,
             Recorrido.estado == EstadoRecorrido.finalizado,
         )
         .options(undefer(Recorrido.ruta))
@@ -213,6 +267,11 @@ async def obtener_recorrido_finalizado(
     if eventos is not None:
         detalle.eventos = [EventoSalida.model_validate(e) for e in eventos]
         detalle.eventos_por_tipo = contar_eventos(eventos)
+    # Los viajes anteriores a HU-18/HU-19 las generan aquí, la primera vez que se
+    # consultan
+    agregar_recomendaciones(
+        detalle, await recomendaciones.obtener_recomendaciones(db, recorrido, eventos)
+    )
     return detalle
 
 

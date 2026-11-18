@@ -9,10 +9,13 @@ from app import models  # noqa: F401  (registra todos los modelos antes de usarl
 from app.auth.router import router as auth_router
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.errores import manejar_error_validacion
+from app.core.errores import ErrorDePlan, manejar_error_de_plan, manejar_error_validacion
+from app.flotas.router import router as flotas_router
+from app.gamificacion.router import router as gamificacion_router
 from app.pruebas.router import router as pruebas_router
 from app.puntaje.router import router as puntaje_router
 from app.recorridos.router import router as recorridos_router
+from app.suscripciones.router import router as suscripciones_router
 
 app = FastAPI(
     title="DriveSense API",
@@ -25,15 +28,21 @@ app.add_middleware(
     allow_origins=settings.lista_cors_origenes,
     allow_methods=["*"],
     allow_headers=["*"],
+    # El panel lee el nombre del archivo del reporte (HU-27)
+    expose_headers=["Content-Disposition"],
     # El token viaja en el header Authorization, no en cookies
     allow_credentials=False,
 )
 
 app.add_exception_handler(RequestValidationError, manejar_error_validacion)
+app.add_exception_handler(ErrorDePlan, manejar_error_de_plan)
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(recorridos_router, prefix="/api/v1")
 app.include_router(puntaje_router, prefix="/api/v1")
+app.include_router(gamificacion_router, prefix="/api/v1")
+app.include_router(flotas_router, prefix="/api/v1")
+app.include_router(suscripciones_router, prefix="/api/v1")
 
 # Temporal: modo pruebas, solo si hay cuenta de pruebas configurada
 if settings.pruebas_correo.strip():

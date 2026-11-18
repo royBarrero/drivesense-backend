@@ -11,6 +11,8 @@ from pydantic import (
     field_validator,
 )
 
+from app.gamificacion.schemas import RecompensaViajeSalida
+from app.recomendaciones.schemas import RecomendacionSalida
 from app.recorridos.models import EstadoRecorrido
 from app.telemetria.models import TipoEvento
 from app.telemetria.schemas import EventoEntrada, EventoSalida
@@ -129,6 +131,12 @@ class RecorridoSalida(BaseModel):
     dispositivo_modelo: str | None
     dispositivo_android: str | None
     version_app: str | None
+    # HU-18 y HU-19: solo en la respuesta del PATCH de un recorrido finalizado
+    recomendacion: RecomendacionSalida | None = None
+    recomendaciones_secundarias: list[RecomendacionSalida] = []
+    # HU-21: puntos, nivel y logros nuevos; solo en la respuesta del PATCH de un
+    # recorrido finalizado
+    recompensa: RecompensaViajeSalida | None = None
 
 
 class RecorridoHistorial(BaseModel):
@@ -162,6 +170,9 @@ class RecorridoDetalle(RecorridoHistorial):
     eventos_por_tipo: dict[TipoEvento, int] | None = None
     # En orden cronológico, para el mapa del viaje (HU-29)
     eventos: list[EventoSalida] | None = None
+    # Recomendación principal (HU-18), nula sin puntaje, y las secundarias (HU-19)
+    recomendacion: RecomendacionSalida | None = None
+    recomendaciones_secundarias: list[RecomendacionSalida] = []
 
 
 class ResumenPeriodo(BaseModel):

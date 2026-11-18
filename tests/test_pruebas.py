@@ -1,5 +1,6 @@
-"""Modo pruebas (temporal): acceso, eventos por 10 km y esquema del listado, sin base de
-datos. Se retira junto con `app/pruebas/`."""
+"""Modo pruebas (temporal): acceso, eventos por 10 km y esquema del listado (sin base de
+datos) y, con base de datos, que oculta las cuentas del seed. Se retira junto con
+`app/pruebas/`."""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ import pytest
 
 from app.auth.models import RolUsuario
 from app.core.config import settings
+from app.pruebas.models import ResultadoValidacion
 from app.pruebas.schemas import ConductorPruebas, DetallePruebas, RecorridoPruebas
 from app.pruebas.service import COLUMNAS_CSV, es_cuenta_pruebas, eventos_por_10km, fila_csv
 from app.recorridos.models import EstadoRecorrido
@@ -148,3 +150,58 @@ def test_detalle_con_eventos_marcados():
     assert detalle["calificacion"] == "regular"
     assert detalle["conductor"]["id"] == 7
     assert [e["validacion"] for e in detalle["eventos"]] == ["falso", None]
+
+
+# --- Con base de datos: las cuentas del seed de presentación no aparecen -----
+
+
+async def _conductor_con_viaje(db, email: str):
+    from app.auth.models import Usuario
+    from tests.test_flotas_perfil import crear_viaje
+
+    conductor = Usuario(
+        nombre=email.split("@")[0],
+        email=email,
+        telefono="70000000",
+        contrasenia_hash="x",
+        rol=RolUsuario.conductor,
+        activo=True,
+        debe_cambiar_contrasenia=False,
+    )
+    db.add(conductor)
+    await db.flush()
+    viaje = await crear_viaje(db, conductor.id, 80, dias_atras=1, eventos=[TipoEvento.frenada_brusca])
+    await db.commit()
+    return viaje
+
+
+async def test_modo_pruebas_oculta_los_viajes_del_seed(db):
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    from app.pruebas import service
+    from app.telemetria.models import Evento
+
+    tester = await _conductor_con_viaje(db, "tester@empresa.example.com")
+    ejemplo = await _conductor_con_viaje(db, "ana@ejemplo.com")
+
+    resumen = await service.obtener_resumen(db, None, None)
+    assert (resumen.testers, resumen.testers_registrados, resumen.viajes, resumen.eventos) == (1, 1, 1, 1)
+    assert (await service.obtener_resumen(db, None, ejemplo.usuario_id)).viajes == 0
+
+    pagina = await service.listar_recorridos(db, None, None, None, 1, 20)
+    assert pagina.total == 1 and [r.id for r in pagina.recorridos] == [tester.id]
+    assert (await service.exportar_recorridos(db, None, None, None)).count("\n") == 2
+    assert [t.email for t in await service.listar_testers(db, None)] == ["tester@empresa.example.com"]
+
+    # El detalle del tester funciona (antes fallaba por las recomendaciones) y el del seed es 404
+    detalle = await service.obtener_detalle(db, tester.id)
+    assert detalle.eventos_por_tipo[TipoEvento.frenada_brusca] == 1
+    with pytest.raises(HTTPException) as error:
+        await service.obtener_detalle(db, ejemplo.id)
+    assert error.value.status_code == 404
+
+    evento_ejemplo = await db.scalar(select(Evento.id).where(Evento.recorrido_id == ejemplo.id))
+    with pytest.raises(HTTPException) as error:
+        await service.marcar_evento(db, evento_ejemplo, ResultadoValidacion.correcto)
+    assert error.value.status_code == 404

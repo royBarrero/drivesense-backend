@@ -57,3 +57,16 @@ def _exigir_conductor(usuario: UsuarioActual) -> Usuario:
 
 # Usuario autenticado con rol conductor; 403 para cualquier otro rol
 ConductorActual = Annotated[Usuario, Depends(_exigir_conductor)]
+
+
+def _exigir_admin_empresa(usuario: UsuarioActual) -> Usuario:
+    if usuario.rol != RolUsuario.admin_empresa or usuario.empresa is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="Solo el administrador de una empresa puede usar esta función"
+        )
+    return usuario
+
+
+# Administrador con empresa; 403 para conductores y cuentas sin empresa.
+# Su `empresa` (ya cargada) define el filtro de toda consulta del panel
+AdminEmpresaActual = Annotated[Usuario, Depends(_exigir_admin_empresa)]

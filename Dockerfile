@@ -14,6 +14,8 @@ RUN pip install -r requirements.txt
 COPY alembic.ini .
 COPY alembic ./alembic
 COPY app ./app
+# Datos de ejemplo para la presentación (manual: docker compose exec backend python scripts/seed_flota_ejemplo.py)
+COPY scripts ./scripts
 
 RUN useradd --create-home --uid 1000 drivesense
 USER drivesense

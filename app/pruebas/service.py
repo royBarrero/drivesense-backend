@@ -66,7 +66,15 @@ def _validar_desde(desde: datetime | None, hasta: datetime) -> None:
         raise error_de_campo("desde", "El inicio del periodo no puede estar en el futuro")
 
 
-_CONDUCTOR_ACTIVO = and_(Usuario.rol == RolUsuario.conductor, Usuario.activo.is_(True))
+# Las cuentas del seed de presentación (scripts/seed_flota_ejemplo.py) no son testers:
+# sus viajes no se muestran en el modo pruebas
+DOMINIO_EJEMPLO = "@ejemplo.com"
+_NO_ES_EJEMPLO = ~Usuario.email.like(f"%{DOMINIO_EJEMPLO}")
+_DE_TESTER = Recorrido.usuario_id.not_in(select(Usuario.id).where(~_NO_ES_EJEMPLO))
+
+_CONDUCTOR_ACTIVO = and_(
+    Usuario.rol == RolUsuario.conductor, Usuario.activo.is_(True), _NO_ES_EJEMPLO
+)
 
 
 # --- Resumen -----------------------------------------------------------------
@@ -82,7 +90,9 @@ async def obtener_resumen(
     _validar_desde(desde, hasta)
 
     finalizado = Recorrido.estado == EstadoRecorrido.finalizado
-    del_conductor = Recorrido.usuario_id == usuario_id if usuario_id is not None else true()
+    del_conductor = and_(
+        _DE_TESTER, Recorrido.usuario_id == usuario_id if usuario_id is not None else true()
+    )
     en_periodo = and_(del_conductor, Recorrido.fecha_inicio < hasta)
     if desde is not None:
         en_periodo = and_(en_periodo, Recorrido.fecha_inicio >= desde)
@@ -142,7 +152,7 @@ async def obtener_resumen(
 def _filtros_recorridos(
     desde: datetime | None, usuario_id: int | None, eventos: FiltroEventos | None
 ) -> list:
-    filtros = [Recorrido.estado.in_(CERRADOS)]
+    filtros = [Recorrido.estado.in_(CERRADOS), _DE_TESTER]
     if desde is not None:
         filtros.append(Recorrido.fecha_inicio >= desde)
     if usuario_id is not None:
@@ -292,11 +302,13 @@ async def exportar_recorridos(
 
 # --- Detalle y validaciones -------------------------------------------------
 
-# Campos del recorrido que copia el detalle (el resto sale del conductor y los eventos)
+# Campos del recorrido que copia el detalle (el resto sale del conductor y los eventos;
+# las recomendaciones no son atributos del recorrido y el modo pruebas no las muestra)
 _CAMPOS_RECORRIDO = tuple(
     campo
     for campo in DetallePruebas.model_fields
-    if campo not in ("conductor", "eventos", "eventos_por_tipo")
+    if campo
+    not in ("conductor", "eventos", "eventos_por_tipo", "recomendacion", "recomendaciones_secundarias")
 )
 
 
@@ -307,7 +319,7 @@ async def obtener_detalle(db: AsyncSession, recorrido_id: int) -> DetallePruebas
         await db.execute(
             select(Recorrido, Usuario.id, Usuario.nombre, Usuario.email)
             .join(Usuario, Usuario.id == Recorrido.usuario_id)
-            .where(Recorrido.id == recorrido_id, Recorrido.estado.in_(CERRADOS))
+            .where(Recorrido.id == recorrido_id, Recorrido.estado.in_(CERRADOS), _NO_ES_EJEMPLO)
             .options(undefer(Recorrido.ruta))
         )
     ).one_or_none()
@@ -341,7 +353,12 @@ async def obtener_detalle(db: AsyncSession, recorrido_id: int) -> DetallePruebas
 
 
 async def _exigir_evento(db: AsyncSession, evento_id: int) -> None:
-    if await db.get(Evento, evento_id) is None:
+    de_tester = await db.scalar(
+        select(Evento.id)
+        .join(Recorrido, Recorrido.id == Evento.recorrido_id)
+        .where(Evento.id == evento_id, _DE_TESTER)
+    )
+    if de_tester is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=EVENTO_NO_ENCONTRADO)
 
 
@@ -376,7 +393,7 @@ async def listar_testers(db: AsyncSession, desde: datetime | None) -> list[Teste
     """Conductores activos con los totales de sus viajes finalizados del periodo; los que
     no tienen viajes también aparecen. Del que viajó más recientemente al que menos."""
     _validar_desde(desde, datetime.now(UTC))
-    del_periodo = [Recorrido.estado == EstadoRecorrido.finalizado]
+    del_periodo = [Recorrido.estado == EstadoRecorrido.finalizado, _DE_TESTER]
     if desde is not None:
         del_periodo.append(Recorrido.fecha_inicio >= desde)
     con_puntaje = Recorrido.drivescore.is_not(None)

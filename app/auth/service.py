@@ -36,10 +36,14 @@ def _crear_sesion(usuario: Usuario) -> SesionSalida:
     )
 
 
-async def _crear_usuario(
-    db: AsyncSession, datos: DatosUsuarioEntrada, rol: RolUsuario, empresa: Empresa | None
-) -> SesionSalida:
-    """Crea el usuario (y su empresa, si es nueva) en un único commit y le inicia sesión."""
+async def insertar_usuario(
+    db: AsyncSession,
+    datos: DatosUsuarioEntrada,
+    rol: RolUsuario,
+    empresa: Empresa | None,
+    debe_cambiar_contrasenia: bool = False,
+) -> Usuario:
+    """Crea el usuario (y su empresa, si es nueva) en un único commit y lo devuelve."""
     existente = await db.scalar(select(Usuario.id).where(Usuario.email == datos.email))
     if existente is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail=EMAIL_YA_REGISTRADO)
@@ -52,7 +56,7 @@ async def _crear_usuario(
         rol=rol,
         empresa=empresa,
         activo=True,
-        debe_cambiar_contrasenia=False,
+        debe_cambiar_contrasenia=debe_cambiar_contrasenia,
     )
     db.add(usuario)
     try:
@@ -63,7 +67,14 @@ async def _crear_usuario(
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail=EMAIL_YA_REGISTRADO)
 
-    return _crear_sesion(usuario)
+    return usuario
+
+
+async def _crear_usuario(
+    db: AsyncSession, datos: DatosUsuarioEntrada, rol: RolUsuario, empresa: Empresa | None
+) -> SesionSalida:
+    """Crea el usuario (y su empresa, si es nueva) en un único commit y le inicia sesión."""
+    return _crear_sesion(await insertar_usuario(db, datos, rol, empresa))
 
 
 async def registrar_conductor(db: AsyncSession, datos: RegistroConductorEntrada) -> SesionSalida:
