@@ -1,4 +1,4 @@
-from fastapi import Request, status
+from fastapi import HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -72,4 +72,20 @@ async def manejar_error_validacion(request: Request, exc: RequestValidationError
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content={"detail": "Datos inválidos", "errores": errores},
+    )
+
+
+class ErrorDePlan(HTTPException):
+    """403 porque el plan de la empresa no lo permite (límite de conductores, función no
+    incluida). Lleva un `codigo` (`plan_limite`, `plan_funcion`) en la respuesta para que el
+    panel lo distinga de un 403 por permisos y sugiera mejorar el plan."""
+
+    def __init__(self, codigo: str, mensaje: str):
+        super().__init__(status.HTTP_403_FORBIDDEN, detail=mensaje)
+        self.codigo = codigo
+
+
+async def manejar_error_de_plan(request: Request, exc: ErrorDePlan) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN, content={"detail": exc.detail, "codigo": exc.codigo}
     )

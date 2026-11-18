@@ -1,7 +1,8 @@
 """Datos de ejemplo para el panel de flotas (manual, no forma parte de la app).
 
-Crea una empresa con su administrador y 5 conductores con viajes del último mes
-(ruta en Santa Cruz de la Sierra, eventos de los cuatro tipos y DriveScore).
+Para la presentación: crea dos empresas con su administrador y 5 conductores cada una,
+todos con viajes del último mes (ruta en Santa Cruz de la Sierra, eventos de los cuatro
+tipos y DriveScore): "Transportes Oriente" en Premium y "Logística Santa Cruz" en Empresas.
 
     python scripts/seed_flota_ejemplo.py             # crea (o recrea) los datos
     python scripts/seed_flota_ejemplo.py --borrar    # solo borra los datos de ejemplo
@@ -33,6 +34,7 @@ from app.puntaje.service import EventoPuntaje, calcular_puntaje  # noqa: E402
 from app.recomendaciones import service as recomendaciones  # noqa: E402
 from app.recomendaciones.models import Recomendacion  # noqa: E402
 from app.recorridos.models import EstadoRecorrido, Recorrido  # noqa: E402
+from app.suscripciones.planes import PlanSuscripcion  # noqa: E402
 from app.telemetria.models import Evento, TipoEvento  # noqa: E402
 
 DOMINIO = "@ejemplo.com"
@@ -53,12 +55,30 @@ PUNTOS_CIUDAD = [
 ]
 
 # Cada perfil: cuántos viajes y cuántos eventos de cada tipo por cada 10 km (en promedio)
-PERFILES = [
+PERFILES_ORIENTE = [
     ("Ana Flores", "ana.flores", 12, dict(frenada=0.1, aceleracion=0.05, giro=0.05, exceso=0.0)),
     ("Bruno Rojas", "bruno.rojas", 10, dict(frenada=3.5, aceleracion=3.0, giro=2.5, exceso=1.8)),
     ("Carla Suárez", "carla.suarez", 8, dict(frenada=1.0, aceleracion=0.6, giro=0.8, exceso=0.4)),
     ("Diego Méndez", "diego.mendez", 6, dict(frenada=1.8, aceleracion=1.2, giro=1.0, exceso=0.8)),
-    ("Elena Vaca", "elena.vaca", 0, dict(frenada=0, aceleracion=0, giro=0, exceso=0)),
+    ("Elena Vaca", "elena.vaca", 7, dict(frenada=0.4, aceleracion=0.3, giro=0.3, exceso=0.1)),
+]
+
+PERFILES_LOGISTICA = [
+    ("Fabio Egüez", "fabio.eguez", 11, dict(frenada=0.3, aceleracion=0.2, giro=0.2, exceso=0.05)),
+    ("Gisela Parada", "gisela.parada", 9, dict(frenada=1.5, aceleracion=1.0, giro=0.8, exceso=0.5)),
+    ("Hugo Cuéllar", "hugo.cuellar", 8, dict(frenada=2.8, aceleracion=2.2, giro=1.8, exceso=1.2)),
+    ("Iván Justiniano", "ivan.justiniano", 12, dict(frenada=0.7, aceleracion=0.5, giro=0.5, exceso=0.2)),
+    ("Julia Rivero", "julia.rivero", 6, dict(frenada=1.2, aceleracion=0.8, giro=1.0, exceso=0.6)),
+]
+
+
+# Planes de pago con vencimiento lejano, para que el seed no caduque durante las demos
+VENCIMIENTO_LEJANO_DIAS = 365
+
+# (empresa, correo del admin sin dominio, nombre del admin, plan, conductores)
+EMPRESAS = [
+    ("Transportes Oriente", "admin", "Admin Oriente", PlanSuscripcion.premium, PERFILES_ORIENTE),
+    ("Logística Santa Cruz", "admin.logistica", "Admin Logística", PlanSuscripcion.empresas, PERFILES_LOGISTICA),
 ]
 
 
@@ -209,92 +229,96 @@ async def crear(sesion) -> None:
     hash_contrasenia = hashear_contrasenia(CONTRASENIA)
     ahora = datetime.now(UTC)
 
-    empresa = Empresa(
-        nombre="Flota Ejemplo (datos de ejemplo)",
-        tipo=TipoEmpresa.flota,
-        email_contacto=f"admin{DOMINIO}",
-        telefono="70000000",
-        activo=True,
-    )
-    sesion.add(empresa)
-    await sesion.flush()
-    sesion.add(
-        Usuario(
-            empresa_id=empresa.id,
-            nombre="Admin Ejemplo",
-            email=f"admin{DOMINIO}",
-            telefono="70000001",
-            contrasenia_hash=hash_contrasenia,
-            rol=RolUsuario.admin_empresa,
+    for nombre_empresa, admin_correo, nombre_admin, plan, perfiles in EMPRESAS:
+        empresa = Empresa(
+            nombre=nombre_empresa,
+            tipo=TipoEmpresa.flota,
+            email_contacto=f"{admin_correo}{DOMINIO}",
+            telefono="70000000",
             activo=True,
-            debe_cambiar_contrasenia=False,
+            plan=plan,
+            plan_inicio=None if plan == PlanSuscripcion.gratis else ahora,
+            plan_vencimiento=None if plan == PlanSuscripcion.gratis else ahora + timedelta(days=VENCIMIENTO_LEJANO_DIAS),
         )
-    )
-
-    for indice, (nombre, usuario_correo, viajes, tasas) in enumerate(PERFILES):
-        conductor = Usuario(
-            empresa_id=empresa.id,
-            nombre=nombre,
-            email=f"{usuario_correo}{DOMINIO}",
-            telefono=f"7100000{indice}",
-            contrasenia_hash=hash_contrasenia,
-            rol=RolUsuario.conductor,
-            activo=True,
-            debe_cambiar_contrasenia=False,
-        )
-        sesion.add(conductor)
+        sesion.add(empresa)
         await sesion.flush()
+        sesion.add(
+            Usuario(
+                empresa_id=empresa.id,
+                nombre=nombre_admin,
+                email=f"{admin_correo}{DOMINIO}",
+                telefono="70000001",
+                contrasenia_hash=hash_contrasenia,
+                rol=RolUsuario.admin_empresa,
+                activo=True,
+                debe_cambiar_contrasenia=False,
+            )
+        )
 
-        for dias_atras in _dias_de_viajes(rng, viajes):
-            medianoche_utc = (ahora - timedelta(days=dias_atras)).replace(
-                hour=0, minute=0, second=0, microsecond=0
+        for indice, (nombre, usuario_correo, viajes, tasas) in enumerate(perfiles):
+            conductor = Usuario(
+                empresa_id=empresa.id,
+                nombre=nombre,
+                email=f"{usuario_correo}{DOMINIO}",
+                telefono=f"7{empresa.id % 10}00000{indice}",
+                contrasenia_hash=hash_contrasenia,
+                rol=RolUsuario.conductor,
+                activo=True,
+                debe_cambiar_contrasenia=False,
             )
-            inicio = medianoche_utc + timedelta(
-                hours=rng.randint(6, 20) + DESFASE_LOCAL_H, minutes=rng.randint(0, 59)
-            )
-            puntos, distancia_m, duracion_s = _trazar_ruta(rng, inicio)
-            fin = inicio + timedelta(seconds=duracion_s)
-            if fin > ahora:  # el viaje de hoy no puede terminar en el futuro
-                inicio -= timedelta(days=1)
-                fin -= timedelta(days=1)
+            sesion.add(conductor)
+            await sesion.flush()
+
+            for dias_atras in _dias_de_viajes(rng, viajes):
+                medianoche_utc = (ahora - timedelta(days=dias_atras)).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                inicio = medianoche_utc + timedelta(
+                    hours=rng.randint(6, 20) + DESFASE_LOCAL_H, minutes=rng.randint(0, 59)
+                )
                 puntos, distancia_m, duracion_s = _trazar_ruta(rng, inicio)
                 fin = inicio + timedelta(seconds=duracion_s)
+                if fin > ahora:  # el viaje de hoy no puede terminar en el futuro
+                    inicio -= timedelta(days=1)
+                    fin -= timedelta(days=1)
+                    puntos, distancia_m, duracion_s = _trazar_ruta(rng, inicio)
+                    fin = inicio + timedelta(seconds=duracion_s)
 
-            eventos = _eventos_del_viaje(rng, tasas, distancia_m, puntos)
-            eventos_puntaje = [EventoPuntaje(e.tipo, e.duracion_s) for e in eventos]
-            puntaje = calcular_puntaje(distancia_m, duracion_s, eventos_puntaje)
-            velocidades = [p["velocidad_kmh"] for p in puntos]
+                eventos = _eventos_del_viaje(rng, tasas, distancia_m, puntos)
+                eventos_puntaje = [EventoPuntaje(e.tipo, e.duracion_s) for e in eventos]
+                puntaje = calcular_puntaje(distancia_m, duracion_s, eventos_puntaje)
+                velocidades = [p["velocidad_kmh"] for p in puntos]
 
-            recorrido = Recorrido(
-                usuario_id=conductor.id,
-                empresa_id=empresa.id,
-                estado=EstadoRecorrido.finalizado,
-                fecha_inicio=inicio,
-                fecha_fin=fin,
-                distancia_m=round(distancia_m, 1),
-                duracion_s=duracion_s,
-                velocidad_maxima_kmh=max(velocidades),
-                velocidad_promedio_kmh=round(sum(velocidades) / len(velocidades), 1),
-                lat_inicio=puntos[0]["lat"],
-                lon_inicio=puntos[0]["lon"],
-                lat_fin=puntos[-1]["lat"],
-                lon_fin=puntos[-1]["lon"],
-                ruta=puntos,
-                drivescore=puntaje.drivescore,
-                puntaje_frenadas=puntaje.frenadas,
-                puntaje_aceleraciones=puntaje.aceleraciones,
-                puntaje_giros=puntaje.giros,
-                puntaje_velocidad=puntaje.velocidad,
-                dispositivo_modelo="Ejemplo",
-                dispositivo_android="14",
-                version_app="ejemplo",
-            )
-            sesion.add(recorrido)
-            await sesion.flush()
-            for evento in eventos:
-                evento.recorrido_id = recorrido.id
-            sesion.add_all(eventos)
-            sesion.add_all(recomendaciones.filas(recorrido.id, puntaje, eventos_puntaje))
+                recorrido = Recorrido(
+                    usuario_id=conductor.id,
+                    empresa_id=empresa.id,
+                    estado=EstadoRecorrido.finalizado,
+                    fecha_inicio=inicio,
+                    fecha_fin=fin,
+                    distancia_m=round(distancia_m, 1),
+                    duracion_s=duracion_s,
+                    velocidad_maxima_kmh=max(velocidades),
+                    velocidad_promedio_kmh=round(sum(velocidades) / len(velocidades), 1),
+                    lat_inicio=puntos[0]["lat"],
+                    lon_inicio=puntos[0]["lon"],
+                    lat_fin=puntos[-1]["lat"],
+                    lon_fin=puntos[-1]["lon"],
+                    ruta=puntos,
+                    drivescore=puntaje.drivescore,
+                    puntaje_frenadas=puntaje.frenadas,
+                    puntaje_aceleraciones=puntaje.aceleraciones,
+                    puntaje_giros=puntaje.giros,
+                    puntaje_velocidad=puntaje.velocidad,
+                    dispositivo_modelo="Ejemplo",
+                    dispositivo_android="14",
+                    version_app="ejemplo",
+                )
+                sesion.add(recorrido)
+                await sesion.flush()
+                for evento in eventos:
+                    evento.recorrido_id = recorrido.id
+                sesion.add_all(eventos)
+                sesion.add_all(recomendaciones.filas(recorrido.id, puntaje, eventos_puntaje))
     await sesion.commit()
 
 
@@ -320,7 +344,8 @@ async def principal(solo_borrar: bool) -> None:
         print("Datos de ejemplo creados. Conductores (viajes, DriveScore):")
         for nombre, viajes, drivescore in resumen:
             print(f"  {nombre}: {viajes} viajes, DriveScore {drivescore if drivescore is not None else '—'}")
-        print(f"Panel: admin{DOMINIO} / {CONTRASENIA}")
+        for nombre_empresa, admin_correo, _, plan, _ in EMPRESAS:
+            print(f"Panel {nombre_empresa} ({plan.value}): {admin_correo}{DOMINIO} / {CONTRASENIA}")
     await engine.dispose()
 
 

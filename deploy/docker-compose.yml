@@ -28,6 +28,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Falta JWT_SECRET en .env}
       CORS_ORIGENES: https://${DOMINIO}
       PRUEBAS_CORREO: ${PRUEBAS_CORREO:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy

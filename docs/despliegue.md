@@ -92,7 +92,23 @@ Si el certificado falla, ver `docker compose logs caddy`: casi siempre es el pue
 2. Si `PRUEBAS_CORREO` se completó después de levantar: `docker compose up -d backend` para que lo tome.
 3. Al iniciar sesión con esa cuenta, Inicio muestra el modo pruebas.
 
-## 6. App (APK para los testers)
+## 6. Datos de ejemplo (presentación)
+
+Opcional: dos empresas con 5 conductores cada una y viajes de los últimos 30 días, para mostrar el panel con datos. Las fechas se calculan al ejecutarlo, así que conviene correrlo pocos días antes de la presentación (se puede repetir: borra y recrea).
+
+```bash
+docker compose exec backend python scripts/seed_flota_ejemplo.py           # crear (o recrear)
+docker compose exec backend python scripts/seed_flota_ejemplo.py --borrar  # quitarlos
+```
+
+| Empresa | Plan | Acceso al panel |
+|---|---|---|
+| Transportes Oriente | Premium | `admin@ejemplo.com` / `Ejemplo1234` |
+| Logística Santa Cruz | Empresas | `admin.logistica@ejemplo.com` / `Ejemplo1234` |
+
+Los conductores (`@ejemplo.com`, misma contraseña) también pueden entrar en la app. Solo toca cuentas `@ejemplo.com`.
+
+## 7. App (APK para los testers)
 
 En la PC de desarrollo, desde `drivesense-mobile`:
 

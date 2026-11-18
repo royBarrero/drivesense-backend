@@ -1,12 +1,15 @@
-"""Recomendaciones del recorrido (HU-18 y HU-19), con reglas fijas (sin IA).
+"""Recomendaciones del recorrido (HU-18 y HU-19).
 
-La elección y el armado del texto son puros; `obtener_recomendaciones` hace las
-consultas. `generar_recomendaciones` devuelve la lista completa y ordenada: la
-primera es la principal (HU-18) y las siguientes, las secundarias (HU-19).
+Las reglas fijas eligen qué recomendaciones van y en qué orden; la elección y el armado
+del texto con plantillas son puros. Al finalizar un viaje, `filas_con_ia` pide a Claude
+(`ia.py`) que redacte cada una con los datos del viaje y, si no responde bien, deja las
+plantillas. `obtener_recomendaciones` hace las consultas. `generar_recomendaciones`
+devuelve la lista completa y ordenada: la primera es la principal (HU-18) y las
+siguientes, las secundarias (HU-19).
 """
 
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -14,6 +17,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.puntaje.service import EventoPuntaje, Puntaje
+from app.recomendaciones import ia
+from app.recomendaciones.ia import ContextoViaje, EventoViaje
 from app.recomendaciones.models import Recomendacion, TipoRecomendacion
 from app.recorridos.models import Recorrido
 from app.telemetria.models import Evento, TipoEvento
@@ -235,9 +240,51 @@ def filas(
             tipo=generada.tipo,
             titulo=generada.titulo,
             texto=generada.texto,
+            generada_por_ia=False,
         )
         for orden, generada in enumerate(generadas[: 1 + MAXIMO_SECUNDARIAS])
     ]
+
+
+async def filas_con_ia(
+    recorrido_id: int,
+    puntaje: Puntaje,
+    eventos: Sequence[EventoViaje],
+    distancia_m: float,
+    duracion_s: int,
+    velocidad_promedio_kmh: float,
+    velocidad_maxima_kmh: float,
+) -> list[Recomendacion]:
+    """Las mismas filas que `filas`, con el título y el texto redactados por la IA.
+
+    Las reglas deciden el tipo y el orden; la IA solo cambia los textos. Una fila que
+    la IA no devolvió bien conserva su plantilla. Nunca lanza: sin IA, son las de `filas`.
+    """
+    resultado = filas(recorrido_id, puntaje, (EventoPuntaje(e.tipo, e.duracion_s) for e in eventos))
+    conteo = Counter(e.tipo for e in eventos)
+    contexto = ContextoViaje(
+        distancia_m=distancia_m,
+        duracion_s=duracion_s,
+        velocidad_promedio_kmh=velocidad_promedio_kmh,
+        velocidad_maxima_kmh=velocidad_maxima_kmh,
+        puntaje=puntaje,
+        eventos=eventos,
+        consejos=[
+            (
+                fila.orden,
+                fila.tipo,
+                0 if fila.tipo == TipoRecomendacion.sin_eventos else conteo[TipoEvento(fila.tipo.value)],
+            )
+            for fila in resultado
+        ],
+    )
+    textos = await ia.redactar(contexto)
+    for fila in resultado:
+        if textos and (texto := textos.get(fila.orden)):
+            fila.titulo = texto.titulo
+            fila.texto = texto.texto
+            fila.generada_por_ia = True
+    return resultado
 
 
 def _puntaje_guardado(recorrido: Recorrido) -> Puntaje:

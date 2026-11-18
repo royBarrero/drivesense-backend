@@ -1,7 +1,17 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, SmallInteger, String, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+    false,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -38,6 +48,8 @@ class Recomendacion(Base):
     )
     titulo: Mapped[str] = mapped_column(String(60))
     texto: Mapped[str] = mapped_column(String(300))
+    # Título y texto redactados por la IA (Claude); falso = plantilla fija
+    generada_por_ia: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     fecha_creacion: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

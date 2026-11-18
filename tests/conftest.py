@@ -100,11 +100,26 @@ async def cliente(db):
         yield c
 
 
-@pytest.fixture
-def registrar_empresa(cliente):
-    """Registra una empresa con su admin por la API y devuelve su sesión (token y usuario)."""
+async def activar_plan(db, empresa_id: int, plan: str, dias: int = 30) -> None:
+    """Deja a la empresa en ese plan de pago, vigente `dias` días (como tras contratarlo)."""
+    await db.execute(
+        text(
+            "UPDATE empresas SET plan = CAST(:plan AS plan_suscripcion), plan_inicio = now(), "
+            "plan_vencimiento = now() + make_interval(days => :dias) WHERE id = :id"
+        ),
+        {"plan": plan, "dias": dias, "id": empresa_id},
+    )
+    await db.commit()
 
-    async def _registrar(numero: int) -> dict:
+
+@pytest.fixture
+def registrar_empresa(cliente, db):
+    """Registra una empresa con su admin por la API y devuelve su sesión (token y usuario).
+
+    Las pruebas de flotas necesitan todas las funciones: por defecto queda en el plan
+    Empresas. `plan="gratis"` la deja como nace (Gratis)."""
+
+    async def _registrar(numero: int, plan: str = "empresas") -> dict:
         respuesta = await cliente.post(
             "/api/v1/auth/empresa/registro",
             json={
@@ -123,7 +138,10 @@ def registrar_empresa(cliente):
             },
         )
         assert respuesta.status_code == 201, respuesta.text
-        return respuesta.json()
+        sesion = respuesta.json()
+        if plan != "gratis":
+            await activar_plan(db, sesion["usuario"]["empresa"]["id"], plan)
+        return sesion
 
     return _registrar
 

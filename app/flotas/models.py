@@ -5,6 +5,7 @@ from sqlalchemy import Boolean, DateTime, Enum, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.suscripciones.planes import PlanSuscripcion
 
 
 class TipoEmpresa(str, enum.Enum):
@@ -24,6 +25,14 @@ class Empresa(Base):
     zona_horaria: Mapped[str] = mapped_column(
         String(50), default="America/La_Paz", server_default="America/La_Paz"
     )
+    # Plan contratado (HU-28). Un plan de pago vencido vale como Gratis: ver `plan_efectivo`
+    plan: Mapped[PlanSuscripcion] = mapped_column(
+        Enum(PlanSuscripcion, name="plan_suscripcion"),
+        default=PlanSuscripcion.gratis,
+        server_default="gratis",
+    )
+    plan_inicio: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    plan_vencimiento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     activo: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     fecha_creacion: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

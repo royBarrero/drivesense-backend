@@ -11,3 +11,5 @@ class RecomendacionSalida(BaseModel):
     tipo: TipoRecomendacion
     titulo: str
     texto: str
+    # Redactada por la IA (Claude) con los datos del viaje; falso = plantilla fija
+    generada_por_ia: bool = False

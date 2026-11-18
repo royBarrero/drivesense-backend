@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     # Temporal: correo de la cuenta admin compartida del modo pruebas; vacío = desactivado
     pruebas_correo: str = ""
 
+    # IA de las recomendaciones (HU-18, HU-19). Clave vacía = solo plantillas, sin llamar a la API
+    anthropic_api_key: str = ""
+    ia_modelo: str = "claude-haiku-5-5"
+    # Tope de espera de la IA al finalizar un viaje; la app espera 10 s la respuesta completa
+    ia_timeout_s: float = 7.0
+
     @property
     def lista_cors_origenes(self) -> list[str]:
         return [origen.strip() for origen in self.cors_origenes.split(",") if origen.strip()]
