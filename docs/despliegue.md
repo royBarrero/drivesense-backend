@@ -66,6 +66,9 @@ En `.env`:
 - `POSTGRES_PASSWORD`: solo letras y números (va dentro de la URL de conexión). Generarla con `openssl rand -hex 24`.
 - `JWT_SECRET`: `openssl rand -base64 32`. **Uno nuevo**, distinto del de desarrollo.
 - `PRUEBAS_CORREO`: el correo de la cuenta de pruebas (paso 5), o vacío para desactivar el modo pruebas.
+- `ANTHROPIC_API_KEY`: clave de la API de Claude para redactar las recomendaciones; vacía = plantillas fijas.
+- `NAVEGACION_PROVEEDOR`: proveedor de las rutas y la búsqueda de destinos (HU-30). `osrm` (por defecto) usa los servidores públicos de OSRM y Nominatim, sin clave; `ors` usa OpenRouteService con `ORS_API_KEY`; `desactivada` la apaga (la app muestra el aviso).
+- `ORS_API_KEY`: solo con `NAVEGACION_PROVEEDOR=ors`.
 
 ## 4. Levantar
 

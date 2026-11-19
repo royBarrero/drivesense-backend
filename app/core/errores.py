@@ -89,3 +89,19 @@ async def manejar_error_de_plan(request: Request, exc: ErrorDePlan) -> JSONRespo
     return JSONResponse(
         status_code=status.HTTP_403_FORBIDDEN, content={"detail": exc.detail, "codigo": exc.codigo}
     )
+
+
+class ErrorDeNavegacion(HTTPException):
+    """Error de la navegación (HU-30): desactivada, sin ruta, sin cuota o proveedor caído.
+    Lleva un `codigo` (`navegacion_desactivada`, `sin_ruta`, `sin_cuota`, `proveedor_caido`)
+    para que la app muestre el aviso que corresponde sin depender del texto."""
+
+    def __init__(self, status_code: int, codigo: str, mensaje: str):
+        super().__init__(status_code, detail=mensaje)
+        self.codigo = codigo
+
+
+async def manejar_error_de_navegacion(request: Request, exc: ErrorDeNavegacion) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code, content={"detail": exc.detail, "codigo": exc.codigo}
+    )

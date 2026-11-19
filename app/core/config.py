@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # Tope de espera de la IA al finalizar un viaje; la app espera 10 s la respuesta completa
     ia_timeout_s: float = 7.0
 
+    # Rutas y búsqueda de lugares (HU-30): `osrm` (OSRM + Nominatim, sin clave; por defecto),
+    # `ors` (OpenRouteService, con `ORS_API_KEY`) o `desactivada`
+    navegacion_proveedor: str = "osrm"
+    navegacion_timeout_s: float = 8.0
+    osrm_url: str = "https://router.project-osrm.org"
+    nominatim_url: str = "https://nominatim.openstreetmap.org"
+    ors_api_key: str = ""
+    ors_url: str = "https://api.openrouteservice.org"
+
     @property
     def lista_cors_origenes(self) -> list[str]:
         return [origen.strip() for origen in self.cors_origenes.split(",") if origen.strip()]

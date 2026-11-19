@@ -31,6 +31,8 @@ os.environ["DATABASE_URL"] = URL_PRUEBAS
 os.environ.setdefault("JWT_SECRET", dotenv_values(RAIZ / ".env").get("JWT_SECRET") or "secreto-de-pruebas")
 # El modo pruebas temporal no debe activarse en los tests
 os.environ["PRUEBAS_CORREO"] = ""
+# Ninguna prueba debe llamar a un proveedor de rutas real: cada una fija el suyo, simulado
+os.environ["NAVEGACION_PROVEEDOR"] = "desactivada"
 
 import asyncpg  # noqa: E402
 import pytest  # noqa: E402
