@@ -9,9 +9,16 @@ from app import models  # noqa: F401  (registra todos los modelos antes de usarl
 from app.auth.router import router as auth_router
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.errores import ErrorDePlan, manejar_error_de_plan, manejar_error_validacion
+from app.core.errores import (
+    ErrorDeNavegacion,
+    ErrorDePlan,
+    manejar_error_de_navegacion,
+    manejar_error_de_plan,
+    manejar_error_validacion,
+)
 from app.flotas.router import router as flotas_router
 from app.gamificacion.router import router as gamificacion_router
+from app.navegacion.router import router as navegacion_router
 from app.pruebas.router import router as pruebas_router
 from app.puntaje.router import router as puntaje_router
 from app.recorridos.router import router as recorridos_router
@@ -36,9 +43,11 @@ app.add_middleware(
 
 app.add_exception_handler(RequestValidationError, manejar_error_validacion)
 app.add_exception_handler(ErrorDePlan, manejar_error_de_plan)
+app.add_exception_handler(ErrorDeNavegacion, manejar_error_de_navegacion)
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(recorridos_router, prefix="/api/v1")
+app.include_router(navegacion_router, prefix="/api/v1")
 app.include_router(puntaje_router, prefix="/api/v1")
 app.include_router(gamificacion_router, prefix="/api/v1")
 app.include_router(flotas_router, prefix="/api/v1")

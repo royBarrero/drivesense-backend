@@ -73,6 +73,9 @@ async def iniciar_recorrido(
         dispositivo_modelo=datos.dispositivo_modelo,
         dispositivo_android=datos.dispositivo_android,
         version_app=datos.version_app,
+        destino_nombre=datos.destino.nombre if datos.destino else None,
+        destino_lat=datos.destino.lat if datos.destino else None,
+        destino_lon=datos.destino.lon if datos.destino else None,
     )
     db.add(recorrido)
     try:

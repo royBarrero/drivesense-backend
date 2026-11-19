@@ -28,6 +28,9 @@ ModeloDispositivo = Annotated[
 ]
 # Versión de Android o de la app, p. ej. "14" o "1.0.3"
 Version = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
+NombreDestino = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)
+]
 
 # Un punto cada ~5 s o ~20 m: alcanza para ~55 h o ~200 km; la app diezma la ruta
 # antes de pasarse
@@ -49,6 +52,22 @@ class PuntoRuta(BaseModel):
     velocidad_kmh: Velocidad
 
 
+class DestinoEntrada(BaseModel):
+    """Destino elegido por el conductor al iniciar (HU-30): el lugar que buscó o un punto del mapa."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    nombre: NombreDestino
+    lat: Latitud
+    lon: Longitud
+
+
+class Destino(BaseModel):
+    nombre: str
+    lat: float
+    lon: float
+
+
 class IniciarRecorridoEntrada(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
@@ -58,6 +77,8 @@ class IniciarRecorridoEntrada(BaseModel):
     dispositivo_modelo: ModeloDispositivo | None = None
     dispositivo_android: Version | None = None
     version_app: Version | None = None
+    # Opcional (HU-30): sin destino el viaje se registra igual
+    destino: DestinoEntrada | None = None
 
 
 class FinalizarRecorridoEntrada(BaseModel):
@@ -131,6 +152,8 @@ class RecorridoSalida(BaseModel):
     dispositivo_modelo: str | None
     dispositivo_android: str | None
     version_app: str | None
+    # HU-30: nulo si se inició sin destino
+    destino: Destino | None = None
     # HU-18 y HU-19: solo en la respuesta del PATCH de un recorrido finalizado
     recomendacion: RecomendacionSalida | None = None
     recomendaciones_secundarias: list[RecomendacionSalida] = []
@@ -162,6 +185,8 @@ class RecorridoDetalle(RecorridoHistorial):
     finalizados antes de HU-15."""
 
     ruta: list[PuntoRuta] | None
+    # HU-30: nulo si se inició sin destino
+    destino: Destino | None = None
     puntaje_frenadas: int | None
     puntaje_aceleraciones: int | None
     puntaje_giros: int | None

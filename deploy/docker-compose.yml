@@ -29,6 +29,8 @@ services:
       CORS_ORIGENES: https://${DOMINIO}
       PRUEBAS_CORREO: ${PRUEBAS_CORREO:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      NAVEGACION_PROVEEDOR: ${NAVEGACION_PROVEEDOR:-osrm}
+      ORS_API_KEY: ${ORS_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy
