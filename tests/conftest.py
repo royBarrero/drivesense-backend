@@ -89,6 +89,10 @@ async def db(base_de_datos):
             )
         )
         await conexion.execute(text(f"TRUNCATE {tablas.scalar()} RESTART IDENTITY CASCADE"))
+    # El modelo de estilos (HU-25) vive en memoria: no debe pasar de una prueba a otra
+    from app.flotas.estilo import reiniciar_cache
+
+    reiniciar_cache()
     async with SessionLocal() as sesion:
         yield sesion
 

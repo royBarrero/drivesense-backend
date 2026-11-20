@@ -275,6 +275,8 @@ async def sincronizar(db: AsyncSession, usuario_id: int) -> Sincronizacion:
             Recorrido.usuario_id == usuario_id,
             Recorrido.estado == EstadoRecorrido.finalizado,
             Recorrido.drivescore.is_not(None),
+            # Los simulados del modo pruebas no suman puntos ni logros
+            Recorrido.simulado.is_(False),
         )
     )
     viajes = [ViajeLogro(*fila) for fila in filas]
@@ -838,6 +840,8 @@ def _finalizados_con_puntaje(usuario_id: int, desde: datetime, hasta: datetime):
         Recorrido.usuario_id == usuario_id,
         Recorrido.estado == EstadoRecorrido.finalizado,
         Recorrido.drivescore.is_not(None),
+        # Los simulados del modo pruebas no cuentan para los desafíos
+        Recorrido.simulado.is_(False),
         Recorrido.fecha_inicio >= desde,
         Recorrido.fecha_inicio < hasta,
     )

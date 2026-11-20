@@ -13,8 +13,10 @@ from app.auth.models import RolUsuario, Usuario
 from app.auth.schemas import DatosUsuarioEntrada
 from app.auth.service import insertar_usuario
 from app.core.security import hashear_contrasenia
-from app.flotas.models import Empresa
+from app.flotas import estilo as estilos
+from app.flotas.models import Empresa, EstiloConduccion, EstiloConductor
 from app.flotas.schemas import (
+    AlertaEstilo,
     BaseTendencia,
     CategoriaPerfil,
     ConductorCreado,
@@ -22,6 +24,7 @@ from app.flotas.schemas import (
     ConductorPerfil,
     ContraseniaTemporal,
     Direccion,
+    EstiloPerfil,
     EventoConductor,
     FranjaHoraria,
     MapaEventos,
@@ -131,6 +134,7 @@ async def listar_conductores(
 ) -> PaginaConductores:
     """Conductores activos de la empresa del admin con los totales de sus viajes
     finalizados del periodo. Los que no tienen viajes también aparecen (al final)."""
+    await estilos.actualizar_estilos(db)
     desde = desde_visible(periodo, datetime.now(UTC), admin.empresa)
     con_puntaje = Recorrido.drivescore.is_not(None)
 
@@ -180,8 +184,12 @@ async def listar_conductores(
             viajes.c.suma_ponderada,
             viajes.c.suma_distancia,
             viajes.c.ultimo_viaje,
+            EstiloConductor.estilo,
+            EstiloConductor.estilo_anterior,
+            EstiloConductor.fecha_alerta,
         )
         .outerjoin(viajes, viajes.c.usuario_id == Usuario.id)
+        .outerjoin(EstiloConductor, EstiloConductor.usuario_id == Usuario.id)
         .where(filtro)
         .order_by(orden_sql, Usuario.nombre, Usuario.id)
         .offset((pagina - 1) * limite)
@@ -199,6 +207,8 @@ async def listar_conductores(
                 calificacion=calificar(drivescore) if drivescore is not None else None,
                 viajes=fila.viajes or 0,
                 ultimo_viaje=fila.ultimo_viaje,
+                estilo=fila.estilo or EstiloConduccion.sin_datos,
+                alerta_estilo=alerta_de(fila.estilo, fila.estilo_anterior, fila.fecha_alerta),
             )
         )
     return PaginaConductores(conductores=conductores, total=total or 0)
@@ -304,6 +314,69 @@ _TIPO_DE_CATEGORIA = {
 
 # Viajes que muestra el perfil como "recientes"
 VIAJES_RECIENTES = 10
+
+
+def alerta_de(
+    estilo: EstiloConduccion | None,
+    anterior: EstiloConduccion | None,
+    fecha: datetime | None,
+) -> AlertaEstilo | None:
+    if estilo is None or anterior is None or fecha is None:
+        return None
+    return AlertaEstilo(anterior=anterior, actual=estilo, fecha=fecha)
+
+
+async def obtener_estilo(db: AsyncSession, admin: Usuario, conductor_id: int) -> EstiloPerfil:
+    """Estilo guardado del conductor, explicado con el promedio de su flota (solo
+    conductores activos de la empresa del admin), y la tendencia de riesgo de sus últimos
+    viajes. Ventana fija de 30 días (cabe en el historial de todos los planes)."""
+    await estilos.actualizar_estilos(db)
+    ahora = datetime.now(UTC)
+    desde = limitar_desde(
+        estilos.inicio_ventana(ahora, admin.empresa.zona_horaria),
+        limite_historial(admin.empresa, ahora),
+    )
+    flota = (await db.scalars(select(Usuario.id).where(_de_la_empresa(admin.empresa_id)))).all()
+    viajes = await estilos.cargar_viajes(db, dict.fromkeys(flota, desde))
+    variables = estilos.variables_de(viajes)
+    guardado = (
+        await db.execute(
+            select(
+                EstiloConductor.estilo, EstiloConductor.estilo_anterior, EstiloConductor.fecha_alerta
+            ).where(EstiloConductor.usuario_id == conductor_id)
+        )
+    ).first()
+    estilo = guardado.estilo if guardado else EstiloConduccion.sin_datos
+    propias = variables.get(conductor_id)
+    # El estilo guardado puede venir de antes de que cambiara la ventana (lo actualiza el
+    # siguiente cálculo): sin datos suficientes hoy, se muestra sin datos
+    if propias is None or not propias.suficiente:
+        estilo = EstiloConduccion.sin_datos
+    tendencia = estilos.tendencia_riesgo([v.drivescore for v in viajes.get(conductor_id, [])])
+    return EstiloPerfil(
+        estilo=estilo,
+        nombre=estilos.NOMBRE_ESTILO[estilo],
+        orden_riesgo=estilos.orden_riesgo(estilo),
+        viajes=propias.viajes if propias else 0,
+        minimo_viajes=estilos.MINIMO_VIAJES_ESTILO,
+        explicacion=estilos.explicar_estilo(
+            estilo, propias, [v for v in variables.values() if v.suficiente]
+        ),
+        viajes_tendencia=tendencia.viajes,
+        pendiente=tendencia.pendiente,
+        proyectado=tendencia.proyectado,
+        riesgo=(
+            nivel_de_riesgo(calificar(tendencia.proyectado))
+            if tendencia.proyectado is not None
+            else None
+        ),
+        tendencia_a_la_baja=tendencia.a_la_baja,
+        alerta=(
+            alerta_de(guardado.estilo, guardado.estilo_anterior, guardado.fecha_alerta)
+            if guardado and guardado.estilo == estilo
+            else None
+        ),
+    )
 
 
 def nivel_de_riesgo(calificacion: Calificacion | None) -> NivelRiesgo | None:
@@ -445,6 +518,7 @@ async def obtener_perfil(
             PuntoEvolucion(fecha=p.fecha, drivescore=p.drivescore, viajes=p.viajes)
             for p in historico.puntos
         ],
+        estilo=await obtener_estilo(db, admin, conductor.id),
     )
 
 

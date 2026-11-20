@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, String, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -37,3 +37,36 @@ class Empresa(Base):
     fecha_creacion: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class EstiloConduccion(str, enum.Enum):
+    """Estilo de conducción de un conductor, aprendido con K-means (ver `app/flotas/estilo.py`).
+
+    Salvo `sin_datos`, el orden de la lista es el de riesgo, de menor a mayor (`ORDEN_ESTILOS`)."""
+
+    prudente = "prudente"
+    intermedio = "intermedio"
+    brusco_curvas = "brusco_curvas"
+    acelerador = "acelerador"
+    brusco_frenar = "brusco_frenar"
+    veloz = "veloz"
+    sin_datos = "sin_datos"
+
+
+class EstiloConductor(Base):
+    """Último estilo calculado de cada conductor de flota y su alerta de cambio."""
+
+    __tablename__ = "estilos_conductor"
+
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"), primary_key=True)
+    estilo: Mapped[EstiloConduccion] = mapped_column(
+        Enum(EstiloConduccion, name="estilo_conduccion")
+    )
+    # Desde cuándo está en este estilo
+    fecha_estilo: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Solo si llegó a `estilo` desde uno de menor riesgo: el anterior y cuándo cambió
+    estilo_anterior: Mapped[EstiloConduccion | None] = mapped_column(
+        Enum(EstiloConduccion, name="estilo_conduccion")
+    )
+    fecha_alerta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fecha_actualizacion: Mapped[datetime] = mapped_column(DateTime(timezone=True))

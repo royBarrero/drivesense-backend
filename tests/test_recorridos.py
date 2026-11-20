@@ -39,6 +39,11 @@ def test_el_listado_trae_el_drivescore_sin_las_categorias():
     assert "puntaje_frenadas" not in salida
 
 
+def test_el_listado_y_el_detalle_marcan_los_simulados():
+    assert RecorridoHistorial.model_validate(recorrido(simulado=True)).simulado is True
+    assert RecorridoDetalle.model_validate(recorrido(simulado=False)).simulado is False
+
+
 def test_un_viaje_sin_puntaje_lo_trae_nulo():
     salida = RecorridoHistorial.model_validate(recorrido(drivescore=None)).model_dump()
     assert salida["drivescore"] is None

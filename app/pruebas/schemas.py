@@ -8,7 +8,15 @@ from pydantic import BaseModel, computed_field
 from app.pruebas.models import ResultadoValidacion
 from app.puntaje.service import Calificacion, calificar
 from app.recorridos.models import EstadoRecorrido
-from app.recorridos.schemas import RecorridoDetalle
+from app.recorridos.schemas import (
+    DestinoEntrada,
+    FinalizarRecorridoEntrada,
+    Latitud,
+    Longitud,
+    ModeloDispositivo,
+    RecorridoDetalle,
+    Version,
+)
 from app.telemetria.models import TipoEvento
 from app.telemetria.schemas import EventoSalida
 
@@ -132,3 +140,22 @@ class TesterPruebas(BaseModel):
         if self.drivescore_promedio is None:
             return None
         return calificar(self.drivescore_promedio)
+
+
+# --- Simulador de demo -------------------------------------------------------
+
+
+class RecorridoSimuladoEntrada(FinalizarRecorridoEntrada):
+    """Lo que la app manda al iniciar (sin la hora: el inicio es `fecha_fin − duracion_s`)
+    y al finalizar un recorrido, con las mismas validaciones."""
+
+    lat_inicio: Latitud
+    lon_inicio: Longitud
+    dispositivo_modelo: ModeloDispositivo | None = None
+    dispositivo_android: Version | None = None
+    version_app: Version | None = None
+    destino: DestinoEntrada | None = None
+
+
+class SimuladosBorrados(BaseModel):
+    borrados: int

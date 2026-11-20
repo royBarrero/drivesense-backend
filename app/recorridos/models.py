@@ -2,6 +2,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -94,6 +95,8 @@ class Recorrido(Base):
     destino_nombre: Mapped[str | None] = mapped_column(String(150))
     destino_lat: Mapped[float | None] = mapped_column(Float)
     destino_lon: Mapped[float | None] = mapped_column(Float)
+    # Creado por el simulador de demo del modo pruebas, no por el teléfono del conductor
+    simulado: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     fecha_creacion: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

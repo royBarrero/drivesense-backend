@@ -111,6 +111,28 @@ async def finalizar_recorrido(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Este recorrido ya fue finalizado")
     if datos.fecha_fin <= recorrido.fecha_inicio:
         raise error_de_campo("fecha_fin", "La fecha de fin debe ser posterior a la de inicio")
+
+    filas, recompensa = await cerrar_recorrido(db, recorrido, datos, gamificar=True)
+    await db.commit()
+
+    salida = RecorridoSalida.model_validate(recorrido)
+    if recorrido.estado == EstadoRecorrido.finalizado:
+        agregar_recomendaciones(salida, filas)
+        salida.recompensa = RecompensaViajeSalida.model_validate(recompensa)
+    return salida
+
+
+async def cerrar_recorrido(
+    db: AsyncSession, recorrido: Recorrido, datos: FinalizarRecorridoEntrada, gamificar: bool
+):
+    """Cierra `recorrido` (con id y `fecha_inicio` ya asignados) con el resumen que manda
+    la app: lo descarta si es corto y, si queda finalizado, agrega sus eventos, su
+    puntaje, sus recomendaciones y, con `gamificar`, sus puntos, logros y desafíos.
+
+    No hace commit. Devuelve las recomendaciones y la recompensa (vacías / nula si se
+    descartó o sin `gamificar`). Lo usan `finalizar_recorrido` y el simulador de demo
+    del modo pruebas (`app/pruebas/`), que no gamifica.
+    """
     # Hora del teléfono contra la del servidor: con la misma tolerancia que fecha_fin
     desde = recorrido.fecha_inicio - TOLERANCIA_RELOJ
     hasta = datos.fecha_fin + TOLERANCIA_RELOJ
@@ -126,50 +148,45 @@ async def finalizar_recorrido(
     recorrido.velocidad_promedio_kmh = datos.velocidad_promedio_kmh
     recorrido.lat_fin = datos.lat_fin
     recorrido.lon_fin = datos.lon_fin
+    if es_corto:
+        return [], None
+
     # La ruta solo se conserva si el viaje cuenta (HU-08)
-    if not es_corto and datos.ruta is not None:
+    if datos.ruta is not None:
         recorrido.ruta = [punto.model_dump(mode="json") for punto in datos.ruta]
     # Eventos y puntaje, también solo si el viaje cuenta (HU-15)
-    if not es_corto:
-        db.add_all(
-            Evento(recorrido_id=recorrido.id, **evento.model_dump()) for evento in datos.eventos
-        )
-        puntaje = calcular_puntaje(
-            datos.distancia_m,
-            datos.duracion_s,
-            (EventoPuntaje(e.tipo, e.duracion_s) for e in datos.eventos),
-        )
-        recorrido.drivescore = puntaje.drivescore
-        recorrido.puntaje_frenadas = puntaje.frenadas
-        recorrido.puntaje_aceleraciones = puntaje.aceleraciones
-        recorrido.puntaje_giros = puntaje.giros
-        recorrido.puntaje_velocidad = puntaje.velocidad
-        # Redactadas por la IA con los datos del viaje; si no responde, las plantillas
-        filas = await recomendaciones.filas_con_ia(
-            recorrido.id,
-            puntaje,
-            [
-                EventoViaje(e.tipo, e.velocidad_kmh, e.intensidad, e.duracion_s, e.velocidad_maxima_kmh)
-                for e in datos.eventos
-            ],
-            datos.distancia_m,
-            datos.duracion_s,
-            datos.velocidad_promedio_kmh,
-            datos.velocidad_maxima_kmh,
-        )
-        db.add_all(filas)
-        # Puntos y logros (HU-21), también los que falten de viajes anteriores
-        sinc = await gamificacion.sincronizar(db, usuario.id)
-        # Desafíos de la semana que este viaje completa, con su recompensa (HU-23)
-        desafios = await gamificacion.completar_desafios(db, usuario.id, datetime.now(UTC))
-        recompensa = gamificacion.recompensa_de(sinc, recorrido.id, desafios)
-    await db.commit()
-
-    salida = RecorridoSalida.model_validate(recorrido)
-    if not es_corto:
-        agregar_recomendaciones(salida, filas)
-        salida.recompensa = RecompensaViajeSalida.model_validate(recompensa)
-    return salida
+    db.add_all(Evento(recorrido_id=recorrido.id, **evento.model_dump()) for evento in datos.eventos)
+    puntaje = calcular_puntaje(
+        datos.distancia_m,
+        datos.duracion_s,
+        (EventoPuntaje(e.tipo, e.duracion_s) for e in datos.eventos),
+    )
+    recorrido.drivescore = puntaje.drivescore
+    recorrido.puntaje_frenadas = puntaje.frenadas
+    recorrido.puntaje_aceleraciones = puntaje.aceleraciones
+    recorrido.puntaje_giros = puntaje.giros
+    recorrido.puntaje_velocidad = puntaje.velocidad
+    # Redactadas por la IA con los datos del viaje; si no responde, las plantillas
+    filas = await recomendaciones.filas_con_ia(
+        recorrido.id,
+        puntaje,
+        [
+            EventoViaje(e.tipo, e.velocidad_kmh, e.intensidad, e.duracion_s, e.velocidad_maxima_kmh)
+            for e in datos.eventos
+        ],
+        datos.distancia_m,
+        datos.duracion_s,
+        datos.velocidad_promedio_kmh,
+        datos.velocidad_maxima_kmh,
+    )
+    db.add_all(filas)
+    if not gamificar:
+        return filas, None
+    # Puntos y logros (HU-21), también los que falten de viajes anteriores
+    sinc = await gamificacion.sincronizar(db, recorrido.usuario_id)
+    # Desafíos de la semana que este viaje completa, con su recompensa (HU-23)
+    desafios = await gamificacion.completar_desafios(db, recorrido.usuario_id, datetime.now(UTC))
+    return filas, gamificacion.recompensa_de(sinc, recorrido.id, desafios)
 
 
 def agregar_recomendaciones(

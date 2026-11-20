@@ -5,6 +5,7 @@ from typing import Annotated
 from pydantic import BaseModel, StringConstraints
 
 from app.auth.schemas import EmailNormalizado, Telefono
+from app.flotas.models import EstiloConduccion
 from app.puntaje.service import Agrupacion, Calificacion
 from app.recorridos.schemas import RecorridoHistorial
 from app.telemetria.models import TipoEvento
@@ -29,6 +30,14 @@ class Direccion(str, enum.Enum):
     desc = "desc"
 
 
+class AlertaEstilo(BaseModel):
+    """El conductor pasó a un estilo de mayor riesgo (HU-25)."""
+
+    anterior: EstiloConduccion
+    actual: EstiloConduccion
+    fecha: datetime
+
+
 class ConductorFlota(BaseModel):
     id: int
     nombre: str
@@ -38,6 +47,9 @@ class ConductorFlota(BaseModel):
     calificacion: Calificacion | None
     viajes: int
     ultimo_viaje: datetime | None
+    # Estilo de conducción de los últimos 30 días (no depende del periodo)
+    estilo: EstiloConduccion
+    alerta_estilo: AlertaEstilo | None
 
 
 class PaginaConductores(BaseModel):
@@ -112,6 +124,26 @@ class PuntoEvolucion(BaseModel):
     viajes: int
 
 
+class EstiloPerfil(BaseModel):
+    """Estilo de conducción (K-means) de los últimos 30 días; no depende del periodo."""
+
+    estilo: EstiloConduccion
+    nombre: str
+    # 0 = menor riesgo; nulo en `sin_datos`
+    orden_riesgo: int | None
+    # Viajes con puntaje de la ventana y el mínimo para tener estilo
+    viajes: int
+    minimo_viajes: int
+    explicacion: list[str]
+    # Tendencia: regresión sobre el DriveScore de los últimos viajes (nulos con pocos)
+    viajes_tendencia: int
+    pendiente: float | None
+    proyectado: int | None
+    riesgo: NivelRiesgo | None
+    tendencia_a_la_baja: bool | None
+    alerta: AlertaEstilo | None
+
+
 class PerfilConductor(BaseModel):
     conductor: ConductorPerfil
     # Viajes finalizados con DriveScore del periodo (los anteriores a HU-15 no cuentan)
@@ -133,6 +165,7 @@ class PerfilConductor(BaseModel):
     eventos_por_10km: float | None
     agrupacion: Agrupacion
     evolucion: list[PuntoEvolucion]
+    estilo: EstiloPerfil
 
 
 class ViajeConductor(RecorridoHistorial):
@@ -266,3 +299,6 @@ class TableroFlota(BaseModel):
     por_calificacion: ConteoCalificaciones
     eventos_por_tipo: dict[TipoEvento, int]
     evolucion: EvolucionFlota
+    # Conductores activos por estilo de conducción (los 6 y `sin_datos`); en ceros si el
+    # plan no incluye el tablero completo
+    por_estilo: dict[EstiloConduccion, int]
