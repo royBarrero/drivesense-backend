@@ -1,9 +1,13 @@
 FROM python:3.14-slim
 
+# OMP/OPENBLAS: el K-means de los estilos (HU-25) usa pocos cientos de filas; con un solo
+# hilo de BLAS no se reserva memoria por hilo (medido: 995 MB -> 255 MB de memoria privada)
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1
 
 WORKDIR /app
 

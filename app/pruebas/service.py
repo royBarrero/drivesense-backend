@@ -4,7 +4,7 @@ la app antes del despliegue. Se retira junto con todo el módulo."""
 import csv
 import io
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, delete, exists, func, select, true
@@ -15,6 +15,7 @@ from sqlalchemy.orm import undefer
 from app.auth.models import RolUsuario, Usuario
 from app.core.config import settings
 from app.core.errores import error_de_campo
+from app.flotas import estilo as estilos
 from app.pruebas.models import ResultadoValidacion, ValidacionEvento
 from app.pruebas.schemas import (
     ConductorPruebas,
@@ -23,18 +24,28 @@ from app.pruebas.schemas import (
     FiltroEventos,
     PaginaRecorridosPruebas,
     RecorridoPruebas,
+    RecorridoSimuladoEntrada,
     ResumenPruebas,
+    SimuladosBorrados,
     TesterPruebas,
     ValidacionSalida,
 )
 from app.puntaje.service import _redondear, calificar, promedio_desde_sumas
 from app.recorridos.models import EstadoRecorrido, Recorrido
-from app.recorridos.service import cargar_eventos, contar_eventos
+from app.recomendaciones.models import Recomendacion
+from app.recorridos.schemas import RecorridoSalida
+from app.recorridos.service import (
+    agregar_recomendaciones,
+    cargar_eventos,
+    cerrar_recorrido,
+    contar_eventos,
+)
 from app.telemetria.models import Evento, TipoEvento
 from app.telemetria.service import contar_por_tipo
 
 RECORRIDO_NO_ENCONTRADO = "Recorrido no encontrado"
 EVENTO_NO_ENCONTRADO = "Evento no encontrado"
+CONDUCTOR_NO_ENCONTRADO = "Conductor no encontrado"
 
 # Estados que se listan: un recorrido en curso todavía no tiene métricas
 CERRADOS = (EstadoRecorrido.finalizado, EstadoRecorrido.descartado)
@@ -70,7 +81,11 @@ def _validar_desde(desde: datetime | None, hasta: datetime) -> None:
 # sus viajes no se muestran en el modo pruebas
 DOMINIO_EJEMPLO = "@ejemplo.com"
 _NO_ES_EJEMPLO = ~Usuario.email.like(f"%{DOMINIO_EJEMPLO}")
-_DE_TESTER = Recorrido.usuario_id.not_in(select(Usuario.id).where(~_NO_ES_EJEMPLO))
+# Los recorridos del simulador de demo tampoco cuentan en los números de los testers
+_REAL = Recorrido.simulado.is_(False)
+_DE_TESTER = and_(
+    Recorrido.usuario_id.not_in(select(Usuario.id).where(~_NO_ES_EJEMPLO)), _REAL
+)
 
 _CONDUCTOR_ACTIVO = and_(
     Usuario.rol == RolUsuario.conductor, Usuario.activo.is_(True), _NO_ES_EJEMPLO
@@ -319,7 +334,12 @@ async def obtener_detalle(db: AsyncSession, recorrido_id: int) -> DetallePruebas
         await db.execute(
             select(Recorrido, Usuario.id, Usuario.nombre, Usuario.email)
             .join(Usuario, Usuario.id == Recorrido.usuario_id)
-            .where(Recorrido.id == recorrido_id, Recorrido.estado.in_(CERRADOS), _NO_ES_EJEMPLO)
+            .where(
+                Recorrido.id == recorrido_id,
+                Recorrido.estado.in_(CERRADOS),
+                _NO_ES_EJEMPLO,
+                _REAL,
+            )
             .options(undefer(Recorrido.ruta))
         )
     ).one_or_none()
@@ -455,3 +475,80 @@ async def listar_testers(db: AsyncSession, desde: datetime | None) -> list[Teste
             )
         )
     return testers
+
+
+# --- Simulador de demo -------------------------------------------------------
+
+
+async def _exigir_tester(db: AsyncSession, usuario_id: int) -> Usuario:
+    """Un conductor de los que lista `/testers` (activo, fuera del seed); si no, 404."""
+    conductor = await db.scalar(select(Usuario).where(Usuario.id == usuario_id, _CONDUCTOR_ACTIVO))
+    if conductor is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=CONDUCTOR_NO_ENCONTRADO)
+    return conductor
+
+
+async def crear_simulado(
+    db: AsyncSession, usuario_id: int, datos: RecorridoSimuladoEntrada
+) -> RecorridoSalida:
+    """Crea un recorrido a nombre del conductor como si lo hubiera enviado su teléfono:
+    mismo cierre que `finalizar_recorrido` (descarte, eventos, DriveScore y
+    recomendaciones), marcado como simulado y sin puntos, logros ni desafíos."""
+    conductor = await _exigir_tester(db, usuario_id)
+    recorrido = Recorrido(
+        usuario_id=conductor.id,
+        empresa_id=conductor.empresa_id,
+        estado=EstadoRecorrido.en_curso,
+        # Así se pueden simular viajes de días pasados
+        fecha_inicio=datos.fecha_fin - timedelta(seconds=datos.duracion_s),
+        lat_inicio=datos.lat_inicio,
+        lon_inicio=datos.lon_inicio,
+        dispositivo_modelo=datos.dispositivo_modelo,
+        dispositivo_android=datos.dispositivo_android,
+        version_app=datos.version_app,
+        destino_nombre=datos.destino.nombre if datos.destino else None,
+        destino_lat=datos.destino.lat if datos.destino else None,
+        destino_lon=datos.destino.lon if datos.destino else None,
+        simulado=True,
+    )
+    # Se cierra antes del flush: un en_curso chocaría con el del conductor (índice único)
+    recorrido.estado = EstadoRecorrido.descartado
+    recorrido.fecha_fin = datos.fecha_fin
+    recorrido.distancia_m = datos.distancia_m
+    recorrido.duracion_s = datos.duracion_s
+    recorrido.velocidad_maxima_kmh = datos.velocidad_maxima_kmh
+    recorrido.velocidad_promedio_kmh = datos.velocidad_promedio_kmh
+    db.add(recorrido)
+    await db.flush()  # para tener el id de los eventos y las recomendaciones
+    filas, _ = await cerrar_recorrido(db, recorrido, datos, gamificar=False)
+    await db.commit()
+    await db.refresh(recorrido)  # trae fecha_creacion (server_default)
+
+    salida = RecorridoSalida.model_validate(recorrido)
+    if recorrido.estado == EstadoRecorrido.finalizado:
+        agregar_recomendaciones(salida, filas)
+        # Con una fecha_fin pasada no se dispararía el recálculo automático del estilo
+        await estilos.actualizar_estilos(db, forzar=True)
+    return salida
+
+
+async def borrar_simulados(db: AsyncSession, usuario_id: int) -> SimuladosBorrados:
+    """Borra todos los recorridos simulados del conductor, con sus eventos (y sus marcas,
+    en cascada) y sus recomendaciones. No tienen puntos ni logros que borrar."""
+    await _exigir_tester(db, usuario_id)
+    simulados = select(Recorrido.id).where(
+        Recorrido.usuario_id == usuario_id, Recorrido.simulado.is_(True)
+    )
+    await db.execute(delete(Evento).where(Evento.recorrido_id.in_(simulados)))
+    await db.execute(delete(Recomendacion).where(Recomendacion.recorrido_id.in_(simulados)))
+    borrados = (
+        await db.execute(
+            delete(Recorrido)
+            .where(Recorrido.usuario_id == usuario_id, Recorrido.simulado.is_(True))
+            .returning(Recorrido.id)
+        )
+    ).all()
+    await db.commit()
+    if borrados:
+        await estilos.actualizar_estilos(db, forzar=True)
+    return SimuladosBorrados(borrados=len(borrados))

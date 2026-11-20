@@ -28,7 +28,8 @@ from app import models  # noqa: E402, F401
 from app.auth.models import RolUsuario, Usuario  # noqa: E402
 from app.core.database import SessionLocal, engine  # noqa: E402
 from app.core.security import hashear_contrasenia  # noqa: E402
-from app.flotas.models import Empresa, TipoEmpresa  # noqa: E402
+from app.flotas.estilo import actualizar_estilos  # noqa: E402
+from app.flotas.models import Empresa, EstiloConductor, TipoEmpresa  # noqa: E402
 from app.gamificacion.models import DesafioSemanal, Experiencia, LogroUsuario  # noqa: E402
 from app.puntaje.service import EventoPuntaje, calcular_puntaje  # noqa: E402
 from app.recomendaciones import service as recomendaciones  # noqa: E402
@@ -59,16 +60,18 @@ PERFILES_ORIENTE = [
     ("Ana Flores", "ana.flores", 12, dict(frenada=0.1, aceleracion=0.05, giro=0.05, exceso=0.0)),
     ("Bruno Rojas", "bruno.rojas", 10, dict(frenada=3.5, aceleracion=3.0, giro=2.5, exceso=1.8)),
     ("Carla Suárez", "carla.suarez", 8, dict(frenada=1.0, aceleracion=0.6, giro=0.8, exceso=0.4)),
-    ("Diego Méndez", "diego.mendez", 6, dict(frenada=1.8, aceleracion=1.2, giro=1.0, exceso=0.8)),
+    # Estilo marcado (HU-25): acelera fuerte mucho más que el resto
+    ("Diego Méndez", "diego.mendez", 6, dict(frenada=0.4, aceleracion=3.2, giro=0.4, exceso=0.2)),
     ("Elena Vaca", "elena.vaca", 7, dict(frenada=0.4, aceleracion=0.3, giro=0.3, exceso=0.1)),
 ]
 
 PERFILES_LOGISTICA = [
     ("Fabio Egüez", "fabio.eguez", 11, dict(frenada=0.3, aceleracion=0.2, giro=0.2, exceso=0.05)),
-    ("Gisela Parada", "gisela.parada", 9, dict(frenada=1.5, aceleracion=1.0, giro=0.8, exceso=0.5)),
-    ("Hugo Cuéllar", "hugo.cuellar", 8, dict(frenada=2.8, aceleracion=2.2, giro=1.8, exceso=1.2)),
-    ("Iván Justiniano", "ivan.justiniano", 12, dict(frenada=0.7, aceleracion=0.5, giro=0.5, exceso=0.2)),
-    ("Julia Rivero", "julia.rivero", 6, dict(frenada=1.2, aceleracion=0.8, giro=1.0, exceso=0.6)),
+    # Estilos marcados (HU-25): Gisela frena fuerte, Hugo excede la velocidad, Julia en curvas
+    ("Gisela Parada", "gisela.parada", 9, dict(frenada=3.5, aceleracion=0.4, giro=0.4, exceso=0.2)),
+    ("Hugo Cuéllar", "hugo.cuellar", 8, dict(frenada=0.8, aceleracion=0.8, giro=0.6, exceso=2.0)),
+    ("Iván Justiniano", "ivan.justiniano", 12, dict(frenada=0.7, aceleracion=0.3, giro=0.5, exceso=0.2)),
+    ("Julia Rivero", "julia.rivero", 6, dict(frenada=0.6, aceleracion=0.5, giro=2.4, exceso=0.3)),
 ]
 
 
@@ -207,6 +210,7 @@ async def borrar(sesion) -> tuple[int, int]:
             {"patron": f"%{DOMINIO}"},
         )
     # Experiencias antes que desafíos: apuntan a ellos
+    await sesion.execute(delete(EstiloConductor).where(EstiloConductor.usuario_id.in_(usuarios)))
     await sesion.execute(delete(Experiencia).where(Experiencia.usuario_id.in_(usuarios)))
     await sesion.execute(delete(DesafioSemanal).where(DesafioSemanal.usuario_id.in_(usuarios)))
     await sesion.execute(delete(LogroUsuario).where(LogroUsuario.usuario_id.in_(usuarios)))
@@ -288,6 +292,8 @@ async def crear(sesion) -> None:
                 eventos_puntaje = [EventoPuntaje(e.tipo, e.duracion_s) for e in eventos]
                 puntaje = calcular_puntaje(distancia_m, duracion_s, eventos_puntaje)
                 velocidades = [p["velocidad_kmh"] for p in puntos]
+                # La máxima del viaje incluye la de sus excesos de velocidad
+                maxima = max(velocidades + [e.velocidad_maxima_kmh or 0 for e in eventos])
 
                 recorrido = Recorrido(
                     usuario_id=conductor.id,
@@ -297,7 +303,7 @@ async def crear(sesion) -> None:
                     fecha_fin=fin,
                     distancia_m=round(distancia_m, 1),
                     duracion_s=duracion_s,
-                    velocidad_maxima_kmh=max(velocidades),
+                    velocidad_maxima_kmh=maxima,
                     velocidad_promedio_kmh=round(sum(velocidades) / len(velocidades), 1),
                     lat_inicio=puntos[0]["lat"],
                     lon_inicio=puntos[0]["lon"],
@@ -332,18 +338,25 @@ async def principal(solo_borrar: bool) -> None:
                 print("No había datos de ejemplo.")
             return
         await crear(sesion)
+        # Estilo de conducción (HU-25): se recalcula ya, con los viajes nuevos
+        await actualizar_estilos(sesion, forzar=True)
         resumen = await sesion.execute(
             text(
                 "SELECT u.nombre, count(r.id), round(sum(r.drivescore * r.distancia_m) / "
-                "nullif(sum(r.distancia_m), 0)) FROM usuarios u LEFT JOIN recorridos r "
-                "ON r.usuario_id = u.id WHERE u.email LIKE :p AND u.rol = 'conductor' "
-                "GROUP BY u.nombre ORDER BY 3 DESC NULLS LAST"
+                "nullif(sum(r.distancia_m), 0)), e.estilo FROM usuarios u "
+                "LEFT JOIN recorridos r ON r.usuario_id = u.id "
+                "LEFT JOIN estilos_conductor e ON e.usuario_id = u.id "
+                "WHERE u.email LIKE :p AND u.rol = 'conductor' "
+                "GROUP BY u.nombre, e.estilo ORDER BY 3 DESC NULLS LAST"
             ),
             {"p": f"%{DOMINIO}"},
         )
-        print("Datos de ejemplo creados. Conductores (viajes, DriveScore):")
-        for nombre, viajes, drivescore in resumen:
-            print(f"  {nombre}: {viajes} viajes, DriveScore {drivescore if drivescore is not None else '—'}")
+        print("Datos de ejemplo creados. Conductores (viajes, DriveScore, estilo):")
+        for nombre, viajes, drivescore, estilo in resumen:
+            print(
+                f"  {nombre}: {viajes} viajes, DriveScore "
+                f"{drivescore if drivescore is not None else '—'}, {estilo or '—'}"
+            )
         for nombre_empresa, admin_correo, _, plan, _ in EMPRESAS:
             print(f"Panel {nombre_empresa} ({plan.value}): {admin_correo}{DOMINIO} / {CONTRASENIA}")
     await engine.dispose()

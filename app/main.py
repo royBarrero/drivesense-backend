@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models  # noqa: F401  (registra todos los modelos antes de usarlos)
+from app.asistente.router import router as asistente_router
 from app.auth.router import router as auth_router
 from app.core.config import settings
 from app.core.database import get_db
@@ -52,6 +53,7 @@ app.include_router(puntaje_router, prefix="/api/v1")
 app.include_router(gamificacion_router, prefix="/api/v1")
 app.include_router(flotas_router, prefix="/api/v1")
 app.include_router(suscripciones_router, prefix="/api/v1")
+app.include_router(asistente_router, prefix="/api/v1")
 
 # Temporal: modo pruebas, solo si hay cuenta de pruebas configurada
 if settings.pruebas_correo.strip():

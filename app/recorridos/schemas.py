@@ -154,6 +154,8 @@ class RecorridoSalida(BaseModel):
     version_app: str | None
     # HU-30: nulo si se inició sin destino
     destino: Destino | None = None
+    # Creado por el simulador de demo del modo pruebas
+    simulado: bool = False
     # HU-18 y HU-19: solo en la respuesta del PATCH de un recorrido finalizado
     recomendacion: RecomendacionSalida | None = None
     recomendaciones_secundarias: list[RecomendacionSalida] = []
@@ -176,6 +178,8 @@ class RecorridoHistorial(BaseModel):
     velocidad_promedio_kmh: float
     # HU-15; nulo en los finalizados antes de existir. El listado no trae las categorías
     drivescore: int | None
+    # Creado por el simulador de demo del modo pruebas: la app y el panel lo etiquetan
+    simulado: bool = False
 
 
 class RecorridoDetalle(RecorridoHistorial):

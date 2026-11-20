@@ -2,7 +2,7 @@
 datos) y, con base de datos, que oculta las cuentas del seed. Se retira junto con
 `app/pruebas/`."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.pruebas.models import ResultadoValidacion
 from app.pruebas.schemas import ConductorPruebas, DetallePruebas, RecorridoPruebas
 from app.pruebas.service import COLUMNAS_CSV, es_cuenta_pruebas, eventos_por_10km, fila_csv
-from app.recorridos.models import EstadoRecorrido
+from app.recorridos.models import EstadoRecorrido, Recorrido
 from app.telemetria.models import TipoEvento
 
 
@@ -205,3 +205,137 @@ async def test_modo_pruebas_oculta_los_viajes_del_seed(db):
     with pytest.raises(HTTPException) as error:
         await service.marcar_evento(db, evento_ejemplo, ResultadoValidacion.correcto)
     assert error.value.status_code == 404
+
+
+# --- Con base de datos: simulador de demo --------------------------------------
+
+
+def _simulado(
+    distancia_m: float = 7_400, duracion_s: int = 900, eventos: list | None = None, **extra
+):
+    from app.pruebas.schemas import RecorridoSimuladoEntrada
+
+    fin = datetime.now(UTC) - timedelta(days=2)
+    return RecorridoSimuladoEntrada.model_validate(
+        {
+            "fecha_fin": fin,
+            "distancia_m": distancia_m,
+            "duracion_s": duracion_s,
+            "velocidad_maxima_kmh": 62,
+            "velocidad_promedio_kmh": 30,
+            "lat_inicio": -17.78,
+            "lon_inicio": -63.18,
+            "lat_fin": -17.80,
+            "lon_fin": -63.16,
+            "ruta": [
+                {
+                    "lat": -17.78,
+                    "lon": -63.18,
+                    "fecha": fin - timedelta(seconds=duracion_s),
+                    "velocidad_kmh": 0,
+                },
+                {"lat": -17.80, "lon": -63.16, "fecha": fin, "velocidad_kmh": 20},
+            ],
+            "eventos": [
+                {
+                    "tipo": "frenada_brusca",
+                    "fecha": fin - timedelta(minutes=5),
+                    "lat": -17.79,
+                    "lon": -63.17,
+                    "velocidad_kmh": 45,
+                    "intensidad": 4.2,
+                }
+            ]
+            if eventos is None
+            else eventos,
+            **extra,
+        }
+    )
+
+
+async def test_simulador_crea_un_recorrido_como_el_de_la_app(db):
+    from fastapi import HTTPException
+    from sqlalchemy import func, select
+
+    from app.gamificacion import service as gamificacion
+    from app.gamificacion.models import Experiencia
+    from app.pruebas import service
+    from app.recorridos import service as recorridos
+
+    real = await _conductor_con_viaje(db, "tester@empresa.example.com")
+    salida = await service.crear_simulado(db, real.usuario_id, _simulado(dispositivo_modelo="Demo"))
+
+    assert salida.simulado and salida.estado == EstadoRecorrido.finalizado
+    # 7,4 km con una frenada → frenadas 70 y DriveScore 91
+    assert (salida.puntaje_frenadas, salida.drivescore) == (70, 91)
+    assert salida.recomendacion.tipo == "frenada_brusca"
+    assert salida.recompensa is None
+    assert salida.fecha_inicio == salida.fecha_fin - timedelta(seconds=900)
+
+    # Cuenta en el historial y el detalle del conductor, con la marca
+    conductor = SimpleNamespace(id=real.usuario_id)
+    historial = await recorridos.listar_historial(db, conductor, None, None, 20)
+    assert [(r.id, r.simulado) for r in historial.recorridos] == [(salida.id, True), (real.id, False)]
+    detalle = await recorridos.armar_detalle_finalizado(db, real.usuario_id, salida.id)
+    assert detalle.simulado and len(detalle.ruta) == 2 and len(detalle.eventos) == 1
+
+    # No suma puntos ni logros, ni siquiera al sincronizar después
+    await gamificacion.sincronizar(db, real.usuario_id)
+    await db.commit()
+    con_puntos = await db.scalars(
+        select(Experiencia.recorrido_id).where(Experiencia.usuario_id == real.usuario_id)
+    )
+    assert salida.id not in set(con_puntos)
+
+    # No entra en los números de Pruebas y su detalle allí es 404
+    resumen = await service.obtener_resumen(db, None, None)
+    assert (resumen.viajes, resumen.eventos) == (1, 1)
+    pagina = await service.listar_recorridos(db, None, None, None, 1, 20)
+    assert [r.id for r in pagina.recorridos] == [real.id]
+    assert (await service.exportar_recorridos(db, None, None, None)).count("\n") == 2
+    assert [t.viajes for t in await service.listar_testers(db, None)] == [1]
+    with pytest.raises(HTTPException) as error:
+        await service.obtener_detalle(db, salida.id)
+    assert error.value.status_code == 404
+
+    # Borrar deja solo el real
+    assert (await service.borrar_simulados(db, real.usuario_id)).borrados == 1
+    assert await db.scalar(select(func.count()).select_from(Recorrido)) == 1
+    assert (await service.borrar_simulados(db, real.usuario_id)).borrados == 0
+
+
+async def test_simulador_corto_queda_descartado(db):
+    from app.pruebas import service
+
+    real = await _conductor_con_viaje(db, "tester@empresa.example.com")
+    salida = await service.crear_simulado(db, real.usuario_id, _simulado(distancia_m=150, eventos=[]))
+    assert salida.estado == EstadoRecorrido.descartado and salida.drivescore is None
+    assert (await service.borrar_simulados(db, real.usuario_id)).borrados == 1
+
+
+async def test_simulador_rechaza_eventos_fuera_del_viaje(db):
+    from fastapi.exceptions import RequestValidationError
+
+    from app.pruebas import service
+
+    real = await _conductor_con_viaje(db, "tester@empresa.example.com")
+    datos = _simulado()
+    datos.eventos[0].fecha = datos.fecha_fin + timedelta(minutes=10)
+    with pytest.raises(RequestValidationError) as error:
+        await service.crear_simulado(db, real.usuario_id, datos)
+    assert error.value.errors()[0]["loc"] == ("body", "eventos")
+
+
+async def test_simulador_solo_sobre_los_testers(db):
+    from fastapi import HTTPException
+
+    from app.pruebas import service
+
+    ejemplo = await _conductor_con_viaje(db, "ana@ejemplo.com")
+    for usuario_id in (ejemplo.usuario_id, 999_999):
+        with pytest.raises(HTTPException) as error:
+            await service.crear_simulado(db, usuario_id, _simulado())
+        assert error.value.status_code == 404
+        with pytest.raises(HTTPException) as error:
+            await service.borrar_simulados(db, usuario_id)
+        assert error.value.status_code == 404

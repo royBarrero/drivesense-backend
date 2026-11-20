@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     ia_modelo: str = "claude-haiku-5-5"
     # Tope de espera de la IA al finalizar un viaje; la app espera 10 s la respuesta completa
     ia_timeout_s: float = 7.0
+    # Tope de espera del asistente de ayuda por mensaje (usa la misma clave y el mismo modelo)
+    asistente_timeout_s: float = 15.0
 
     # Rutas y búsqueda de lugares (HU-30): `osrm` (OSRM + Nominatim, sin clave; por defecto),
     # `ors` (OpenRouteService, con `ORS_API_KEY`) o `desactivada`

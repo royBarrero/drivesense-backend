@@ -14,11 +14,14 @@ from app.auth.dependencias import UsuarioActual
 from app.auth.models import Usuario
 from app.core.database import get_db
 from app.pruebas import service
+from app.recorridos.schemas import RecorridoSalida
 from app.pruebas.schemas import (
     DetallePruebas,
     FiltroEventos,
     PaginaRecorridosPruebas,
+    RecorridoSimuladoEntrada,
     ResumenPruebas,
+    SimuladosBorrados,
     TesterPruebas,
     ValidacionEntrada,
     ValidacionSalida,
@@ -113,3 +116,21 @@ async def desmarcar_evento(evento_id: int, db: AsyncSession = Depends(get_db)):
 async def testers(db: AsyncSession = Depends(get_db), desde: Desde = None):
     """Conductores activos con los totales de sus viajes del periodo."""
     return await service.listar_testers(db, desde)
+
+
+@router.post(
+    "/conductores/{usuario_id}/recorridos-simulados",
+    response_model=RecorridoSalida,
+    status_code=status.HTTP_201_CREATED,
+)
+async def crear_simulado(
+    usuario_id: int, datos: RecorridoSimuladoEntrada, db: AsyncSession = Depends(get_db)
+):
+    """Simulador de demo: crea un recorrido del conductor como si lo enviara su teléfono."""
+    return await service.crear_simulado(db, usuario_id, datos)
+
+
+@router.delete("/conductores/{usuario_id}/recorridos-simulados", response_model=SimuladosBorrados)
+async def borrar_simulados(usuario_id: int, db: AsyncSession = Depends(get_db)):
+    """Borra todos los recorridos simulados del conductor."""
+    return await service.borrar_simulados(db, usuario_id)

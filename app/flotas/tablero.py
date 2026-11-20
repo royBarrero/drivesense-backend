@@ -9,10 +9,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, time
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import Usuario
+from app.flotas.estilo import actualizar_estilos
+from app.flotas.models import EstiloConduccion, EstiloConductor
 from app.flotas.reporte import PeriodoReporte, _cargar, limitar_rango, _condiciones, _sumar_eventos, resolver_rango
 from app.flotas.schemas import (
     ConteoCalificaciones,
@@ -121,6 +123,19 @@ def armar_evolucion(
     )
 
 
+async def contar_estilos(db: AsyncSession, empresa_id: int) -> dict[EstiloConduccion, int]:
+    """Conductores activos de la empresa por estilo guardado; sin fila, `sin_datos`."""
+    estilo = func.coalesce(EstiloConductor.estilo, EstiloConduccion.sin_datos)
+    filas = await db.execute(
+        select(estilo, func.count())
+        .select_from(Usuario)
+        .outerjoin(EstiloConductor, EstiloConductor.usuario_id == Usuario.id)
+        .where(_de_la_empresa(empresa_id))
+        .group_by(estilo)
+    )
+    return dict.fromkeys(EstiloConduccion, 0) | {EstiloConduccion(e): n for e, n in filas}
+
+
 async def obtener_tablero(db: AsyncSession, admin: Usuario, periodo: Periodo) -> TableroFlota:
     ahora = datetime.now(UTC)
     zona = ZoneInfo(admin.empresa.zona_horaria)
@@ -129,6 +144,11 @@ async def obtener_tablero(db: AsyncSession, admin: Usuario, periodo: Periodo) ->
         limite_historial(admin.empresa, ahora),
     )
     completo = definicion_de(admin.empresa, ahora).tablero_completo
+    if completo:
+        await actualizar_estilos(db)
+        por_estilo = await contar_estilos(db, admin.empresa_id)
+    else:
+        por_estilo = dict.fromkeys(EstiloConduccion, 0)
 
     activos = (
         await db.execute(select(Usuario.id, Usuario.nombre).where(_de_la_empresa(admin.empresa_id)))
@@ -186,4 +206,5 @@ async def obtener_tablero(db: AsyncSession, admin: Usuario, periodo: Periodo) ->
                 puntos=[],
             )
         ),
+        por_estilo=por_estilo,
     )
